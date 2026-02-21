@@ -1,35 +1,29 @@
-# Prompt 1 — Project Scaffold & Build System
+# Prompt 2 — Protobuf & gRPC Service Definitions
 
 ## Todo
 
-- [x] 1. Create full directory layout (proto/, src/server/, src/worker/, src/ctl/, src/common/, db/migrations/, k8s/, docker/, cmake/, prometheus/, grafana/, docs/, tests/)
-- [x] 2. Create root CMakeLists.txt (C++17, three targets: jq-server/jq-worker/jq-ctl, link all deps, add tests/ subdirectory)
-- [x] 3. Create cmake/toolchain-macos.cmake (Homebrew LLVM clang/clang++ at /opt/homebrew/opt/llvm/bin/)
-- [x] 4. Create vcpkg.json (all C++ dependencies for non-macOS fallback)
-- [x] 5. Create .gitignore (C++/CMake appropriate)
-- [x] 6. Create placeholder main.cc for jq-server (src/server/main.cc)
-- [x] 7. Create placeholder main.cc for jq-worker (src/worker/main.cc)
-- [x] 8. Create placeholder main.cc for jq-ctl (src/ctl/main.cc)
-- [x] 9. Verify build: cmake -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-macos.cmake -B build && cmake --build build
-- [x] 10. Document activity in docs/activity.md
-- [x] 11. Push changes to git
+- [x] 1. Create proto/common.proto — JobStatus enum, WorkerStatus enum, Job/Queue/Worker messages (using google.protobuf.Timestamp for time fields)
+- [x] 2. Create proto/job_service.proto — JobService with 6 RPCs + all request/response messages
+- [x] 3. Create proto/worker_service.proto — WorkerService with 5 RPCs + all request/response messages (StreamJobs is server-streaming)
+- [x] 4. Create proto/admin_service.proto — AdminService with 8 RPCs + all request/response messages
+- [x] 5. Update CMakeLists.txt — add protoc + grpc_cpp_plugin code generation step; create a proto_gen static library; link it to all three binaries
+- [x] 6. Verify: cmake configure + build succeeds, all .proto files compile without errors
+- [x] 7. Append to docs/activity.md and push to git
 
 ## Review
 
-All tasks completed successfully. The build skeleton is in place.
+All tasks completed successfully. Proto definitions are in place and wired into the build.
 
 **What was created:**
-- Full directory layout matching tech-stack.md
-- `CMakeLists.txt` — C++17, Homebrew LLVM toolchain, three targets (`jq-server`, `jq-worker`, `jq-ctl`), all dependencies wired via `find_package` and `pkg_check_modules`, `tests/` subdirectory included
-- `cmake/toolchain-macos.cmake` — Homebrew LLVM clang 21.1.8
-- `vcpkg.json` — all C++ deps for cross-platform fallback
-- `.gitignore` — C++/CMake appropriate
-- `src/{server,worker,ctl}/main.cc` — placeholder `int main()` stubs
-- `tests/CMakeLists.txt` — placeholder for future test targets
-- `docs/activity.md` — activity log started
+- `proto/common.proto` — `JobStatus`/`WorkerStatus` enums; `Job`, `Queue`, `Worker`, `JobEvent` messages
+- `proto/job_service.proto` — `JobService` with 6 RPCs and all request/response types
+- `proto/worker_service.proto` — `WorkerService` with 5 RPCs (StreamJobs is server-streaming)
+- `proto/admin_service.proto` — `AdminService` with 8 RPCs including QueueStats and ComponentStatus messages
 
-**Notable fixes during implementation:**
-- Boost 1.90 on Homebrew is header-only for `boost_system`; changed to `Boost::filesystem + Boost::headers`
-- `libpq`, `libpqxx`, `hiredis`, and `librdkafka` are keg-only Homebrew formulas; their pkgconfig paths are non-standard and must be explicitly added to `PKG_CONFIG_PATH` in CMakeLists.txt
+**CMakeLists.txt changes:**
+- `add_custom_command` per `.proto` file runs protoc + grpc_cpp_plugin, generating `.pb.cc`/`.pb.h` and `.grpc.pb.cc`/`.grpc.pb.h`
+- `proto_gen` static library compiles all 8 generated `.cc` files; prepended to `COMMON_LIBS`
 
-**Build result:** All three binaries compiled cleanly with Homebrew LLVM Clang 21.1.8.
+**Fix:** Removed unused `import "common.proto"` from `worker_service.proto` (all messages use only primitive types).
+
+**Build result:** 4 .proto files generate cleanly; `proto_gen` built from 8 generated source files; all three binaries linked successfully.

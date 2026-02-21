@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package jq;
+
+import "common.proto";
+
+// ---------------------------------------------------------------------------
+// JobService — job submission and lifecycle queries (used by jq-ctl clients)
+// ---------------------------------------------------------------------------
+
+service JobService {
+  rpc SubmitJob    (SubmitJobRequest)    returns (SubmitJobResponse);
+  rpc CancelJob    (CancelJobRequest)    returns (CancelJobResponse);
+  rpc GetJobStatus (GetJobStatusRequest) returns (GetJobStatusResponse);
+  rpc ListJobs     (ListJobsRequest)     returns (ListJobsResponse);
+  rpc GetJobLogs   (GetJobLogsRequest)   returns (GetJobLogsResponse);
+  rpc RetryJob     (RetryJobRequest)     returns (RetryJobResponse);
+}
+
+// ---------------------------------------------------------------------------
+// SubmitJob
+// ---------------------------------------------------------------------------
+
+message SubmitJobRequest {
+  string queue_name  = 1;
+  bytes  payload     = 2;
+  int32  priority    = 3;  // optional; defaults to 0 if omitted
+  int32  max_retries = 4;  // optional; 0 means use queue default
+  int32  ttl_seconds = 5;  // optional; 0 means no TTL
+}
+
+message SubmitJobResponse {
+  string job_id = 1;
+}
+
+// ---------------------------------------------------------------------------
+// CancelJob
+// ---------------------------------------------------------------------------
+
+message CancelJobRequest {
+  string job_id = 1;
+}
+
+message CancelJobResponse {}
+
+// ---------------------------------------------------------------------------
+// GetJobStatus
+// ---------------------------------------------------------------------------
+
+message GetJobStatusRequest {
+  string job_id = 1;
+}
+
+message GetJobStatusResponse {
+  Job job = 1;
+}
+
+// ---------------------------------------------------------------------------
+// ListJobs
+// ---------------------------------------------------------------------------
+
+message ListJobsRequest {
+  string    queue_name  = 1;  // optional filter
+  JobStatus status      = 2;  // optional filter; JOB_STATUS_UNSPECIFIED = no filter
+  int32     limit       = 3;  // default 20, max 100
+  string    page_token  = 4;  // opaque pagination cursor
+}
+
+message ListJobsResponse {
+  repeated Job jobs           = 1;
+  string       next_page_token = 2;  // empty when no more pages
+}
+
+// ---------------------------------------------------------------------------
+// GetJobLogs
+// ---------------------------------------------------------------------------
+
+message GetJobLogsRequest {
+  string job_id = 1;
+}
+
+message GetJobLogsResponse {
+  repeated JobEvent events = 1;
+}
+
+// ---------------------------------------------------------------------------
+// RetryJob
+// ---------------------------------------------------------------------------
+
+message RetryJobRequest {
+  string job_id = 1;
+}
+
+message RetryJobResponse {
+  string job_id = 1;
+}

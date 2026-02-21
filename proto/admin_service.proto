@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package jq;
+
+import "common.proto";
+
+// ---------------------------------------------------------------------------
+// AdminService — queue and worker pool management (used by jq-ctl operators)
+// ---------------------------------------------------------------------------
+
+service AdminService {
+  rpc CreateQueue     (CreateQueueRequest)     returns (CreateQueueResponse);
+  rpc DeleteQueue     (DeleteQueueRequest)     returns (DeleteQueueResponse);
+  rpc ListQueues      (ListQueuesRequest)      returns (ListQueuesResponse);
+  rpc GetQueueStats   (GetQueueStatsRequest)   returns (GetQueueStatsResponse);
+  rpc ListWorkers     (ListWorkersRequest)     returns (ListWorkersResponse);
+  rpc DrainWorker     (DrainWorkerRequest)     returns (DrainWorkerResponse);
+  rpc ShutdownWorker  (ShutdownWorkerRequest)  returns (ShutdownWorkerResponse);
+  rpc GetSystemStatus (GetSystemStatusRequest) returns (GetSystemStatusResponse);
+}
+
+// ---------------------------------------------------------------------------
+// CreateQueue
+// ---------------------------------------------------------------------------
+
+message CreateQueueRequest {
+  string name        = 1;
+  int32  max_retries = 2;  // 0 means use server default (3)
+  int32  ttl_seconds = 3;  // 0 means no TTL
+}
+
+message CreateQueueResponse {
+  Queue queue = 1;
+}
+
+// ---------------------------------------------------------------------------
+// DeleteQueue
+// ---------------------------------------------------------------------------
+
+message DeleteQueueRequest {
+  string name  = 1;
+  bool   force = 2;  // if true, delete even when queue is non-empty
+}
+
+message DeleteQueueResponse {}
+
+// ---------------------------------------------------------------------------
+// ListQueues
+// ---------------------------------------------------------------------------
+
+message ListQueuesRequest {}
+
+message ListQueuesResponse {
+  repeated Queue queues = 1;
+}
+
+// ---------------------------------------------------------------------------
+// GetQueueStats
+// ---------------------------------------------------------------------------
+
+message QueueStats {
+  string queue_name       = 1;
+  int64  pending_count    = 2;
+  int64  running_count    = 3;
+  int64  failed_count     = 4;
+  int64  done_count       = 5;
+  int64  dead_letter_count = 6;
+  int64  total_processed  = 7;
+  double avg_duration_ms  = 8;
+  double error_rate       = 9;
+}
+
+message GetQueueStatsRequest {
+  string name = 1;
+}
+
+message GetQueueStatsResponse {
+  QueueStats stats = 1;
+}
+
+// ---------------------------------------------------------------------------
+// ListWorkers
+// ---------------------------------------------------------------------------
+
+message ListWorkersRequest {}
+
+message ListWorkersResponse {
+  repeated Worker workers = 1;
+}
+
+// ---------------------------------------------------------------------------
+// DrainWorker
+// ---------------------------------------------------------------------------
+
+message DrainWorkerRequest {
+  string worker_id = 1;
+}
+
+message DrainWorkerResponse {}
+
+// ---------------------------------------------------------------------------
+// ShutdownWorker
+// ---------------------------------------------------------------------------
+
+message ShutdownWorkerRequest {
+  string worker_id = 1;
+}
+
+message ShutdownWorkerResponse {}
+
+// ---------------------------------------------------------------------------
+// GetSystemStatus
+// ---------------------------------------------------------------------------
+
+message ComponentStatus {
+  string name      = 1;
+  bool   healthy   = 2;
+  string message   = 3;
+}
+
+message GetSystemStatusRequest {}
+
+message GetSystemStatusResponse {
+  bool                    healthy          = 1;
+  int32                   active_workers   = 2;
+  repeated QueueStats     queue_stats      = 3;
+  repeated ComponentStatus components      = 4;  // db, redis, kafka
+}

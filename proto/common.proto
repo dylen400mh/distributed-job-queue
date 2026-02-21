@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package jq;
+
+import "google/protobuf/timestamp.proto";
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum JobStatus {
+  JOB_STATUS_UNSPECIFIED = 0;
+  PENDING                = 1;
+  ASSIGNED               = 2;
+  RUNNING                = 3;
+  DONE                   = 4;
+  FAILED                 = 5;
+  DEAD_LETTERED          = 6;
+}
+
+enum WorkerStatus {
+  WORKER_STATUS_UNSPECIFIED = 0;
+  ONLINE                    = 1;
+  OFFLINE                   = 2;
+  DRAINING                  = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Shared messages
+// ---------------------------------------------------------------------------
+
+message Job {
+  string                    job_id       = 1;
+  string                    queue_name   = 2;
+  bytes                     payload      = 3;
+  int32                     priority     = 4;  // 0–9, 9 is highest
+  JobStatus                 status       = 5;
+  int32                     max_retries  = 6;
+  int32                     retry_count  = 7;
+  google.protobuf.Timestamp created_at   = 8;
+  google.protobuf.Timestamp started_at   = 9;
+  google.protobuf.Timestamp completed_at = 10;
+  string                    worker_id    = 11;
+  bytes                     result       = 12;
+  google.protobuf.Timestamp not_before   = 13;
+  string                    error_message = 14;
+}
+
+message Queue {
+  string                    name        = 1;
+  int32                     max_retries = 2;
+  int32                     ttl_seconds = 3;  // 0 means no TTL
+  google.protobuf.Timestamp created_at  = 4;
+}
+
+message Worker {
+  string                    worker_id       = 1;
+  string                    hostname        = 2;
+  WorkerStatus              status          = 3;
+  int32                     concurrency     = 4;
+  int32                     active_job_count = 5;
+  google.protobuf.Timestamp last_heartbeat  = 6;
+  repeated string           queues          = 7;
+}
+
+// A single entry in the job audit log.
+message JobEvent {
+  int64                     id          = 1;
+  string                    job_id      = 2;
+  JobStatus                 from_status = 3;
+  JobStatus                 to_status   = 4;
+  string                    worker_id   = 5;
+  string                    reason      = 6;
+  google.protobuf.Timestamp occurred_at = 7;
+}

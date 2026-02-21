@@ -42,9 +42,58 @@ pkg_check_modules(HIREDIS REQUIRED IMPORTED_TARGET hiredis)
 pkg_check_modules(RDKAFKA REQUIRED IMPORTED_TARGET rdkafka++)
 
 # ---------------------------------------------------------------------------
+# Protobuf + gRPC code generation
+# ---------------------------------------------------------------------------
+find_program(PROTOC_EXE protoc HINTS /opt/homebrew/bin REQUIRED)
+find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin HINTS /opt/homebrew/bin REQUIRED)
+
+set(PROTO_DIR     ${CMAKE_SOURCE_DIR}/proto)
+set(PROTO_OUT_DIR ${CMAKE_BINARY_DIR}/proto_gen)
+file(MAKE_DIRECTORY ${PROTO_OUT_DIR})
+
+set(PROTO_FILES
+    common.proto
+    job_service.proto
+    worker_service.proto
+    admin_service.proto
+)
+
+set(PROTO_GEN_SRCS "")
+
+foreach(PROTO_FILE ${PROTO_FILES})
+    get_filename_component(PROTO_NAME ${PROTO_FILE} NAME_WE)
+
+    set(PB_SRC   ${PROTO_OUT_DIR}/${PROTO_NAME}.pb.cc)
+    set(PB_HDR   ${PROTO_OUT_DIR}/${PROTO_NAME}.pb.h)
+    set(GRPC_SRC ${PROTO_OUT_DIR}/${PROTO_NAME}.grpc.pb.cc)
+    set(GRPC_HDR ${PROTO_OUT_DIR}/${PROTO_NAME}.grpc.pb.h)
+
+    add_custom_command(
+        OUTPUT  ${PB_SRC} ${PB_HDR} ${GRPC_SRC} ${GRPC_HDR}
+        COMMAND ${PROTOC_EXE}
+                --proto_path=${PROTO_DIR}
+                --proto_path=/opt/homebrew/include
+                --cpp_out=${PROTO_OUT_DIR}
+                --grpc_out=${PROTO_OUT_DIR}
+                --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
+                ${PROTO_DIR}/${PROTO_FILE}
+        DEPENDS ${PROTO_DIR}/${PROTO_FILE}
+        COMMENT "Generating protobuf/gRPC C++ for ${PROTO_FILE}"
+    )
+
+    list(APPEND PROTO_GEN_SRCS ${PB_SRC} ${GRPC_SRC})
+endforeach()
+
+# Static library of all generated proto/gRPC sources.
+add_library(proto_gen STATIC ${PROTO_GEN_SRCS})
+target_include_directories(proto_gen PUBLIC ${PROTO_OUT_DIR})
+target_link_libraries(proto_gen PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+
+# ---------------------------------------------------------------------------
 # Common dependency set (linked by all three binaries)
 # ---------------------------------------------------------------------------
 set(COMMON_LIBS
+    proto_gen
     gRPC::grpc++
     gRPC::grpc
     protobuf::libprotobuf

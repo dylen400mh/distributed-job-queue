@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package jq;
+
+// ---------------------------------------------------------------------------
+// WorkerService — worker registration, heartbeat, job streaming, results
+// ---------------------------------------------------------------------------
+
+service WorkerService {
+  rpc RegisterWorker (RegisterWorkerRequest) returns (RegisterWorkerResponse);
+  rpc Heartbeat      (HeartbeatRequest)      returns (HeartbeatResponse);
+  // Server-streaming: jq-server pushes job assignments to the worker.
+  rpc StreamJobs     (StreamJobsRequest)     returns (stream JobAssignment);
+  rpc ReportResult   (ReportResultRequest)   returns (ReportResultResponse);
+  rpc Deregister     (DeregisterRequest)     returns (DeregisterResponse);
+}
+
+// ---------------------------------------------------------------------------
+// RegisterWorker
+// ---------------------------------------------------------------------------
+
+message RegisterWorkerRequest {
+  string          worker_id   = 1;
+  string          hostname    = 2;
+  int32           concurrency = 3;
+  repeated string queues      = 4;  // queue names this worker subscribes to
+}
+
+message RegisterWorkerResponse {
+  string worker_id = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Heartbeat
+// ---------------------------------------------------------------------------
+
+message HeartbeatRequest {
+  string worker_id       = 1;
+  int32  active_job_count = 2;
+}
+
+message HeartbeatResponse {}
+
+// ---------------------------------------------------------------------------
+// StreamJobs (server-streaming)
+// ---------------------------------------------------------------------------
+
+message StreamJobsRequest {
+  string          worker_id = 1;
+  repeated string queues    = 2;
+}
+
+// Sent by jq-server to the worker over the streaming RPC.
+message JobAssignment {
+  string job_id     = 1;
+  string queue_name = 2;
+  bytes  payload    = 3;
+  int32  priority   = 4;
+}
+
+// ---------------------------------------------------------------------------
+// ReportResult
+// ---------------------------------------------------------------------------
+
+message ReportResultRequest {
+  string worker_id     = 1;
+  string job_id        = 2;
+  bool   success       = 3;
+  bytes  result        = 4;  // JSON result payload; may be empty
+  string error_message = 5;  // populated on failure
+}
+
+message ReportResultResponse {}
+
+// ---------------------------------------------------------------------------
+// Deregister
+// ---------------------------------------------------------------------------
+
+message DeregisterRequest {
+  string worker_id = 1;
+}
+
+message DeregisterResponse {}
