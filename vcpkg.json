@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+  "name": "distributed-job-queue",
+  "version": "0.1.0",
+  "description": "Distributed job queue system with gRPC, PostgreSQL, Redis, and Kafka",
+  "dependencies": [
+    "grpc",
+    "protobuf",
+    "libpqxx",
+    "hiredis",
+    "librdkafka",
+    "spdlog",
+    "nlohmann-json",
+    "boost-system",
+    "boost-filesystem",
+    "abseil",
+    "prometheus-cpp",
+    "yaml-cpp",
+    "gtest"
+  ]
+}

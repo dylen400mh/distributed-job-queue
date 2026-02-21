@@ -1,41 +1,64 @@
-# Prerequisites
-*.d
+# Build output
+build/
+out/
+cmake-build-*/
 
-# Compiled Object files
-*.slo
-*.lo
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+compile_commands.json
+
+# Compiled binaries
+jq-server
+jq-worker
+jq-ctl
+
+# Object files
 *.o
 *.obj
 
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
+# Static and shared libraries
+*.a
 *.so
 *.dylib
 *.dll
 
-# Fortran module files
-*.mod
-*.smod
+# Protobuf generated sources (generated at build time)
+*.pb.cc
+*.pb.h
+*.grpc.pb.cc
+*.grpc.pb.h
 
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
+# Config files with secrets (never commit these)
+config.local.yaml
+*.local.yaml
+.env
+.env.*
 
-# Executables
-*.exe
-*.out
-*.app
+# TLS certificates (local dev only)
+*.pem
+*.crt
+*.key
+*.csr
+tls/
 
-# debug information files
-*.dwo
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# vcpkg build artifacts
+vcpkg_installed/
+
+# Logs
+*.log
