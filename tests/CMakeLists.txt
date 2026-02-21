@@ -1,8 +1,16 @@
 # tests/CMakeLists.txt
-# Placeholder — unit, integration, and e2e test targets will be added here
-# as implementation progresses.
 
-# Example skeleton (uncomment when tests exist):
-# add_executable(unit_tests unit/placeholder_test.cc)
-# target_link_libraries(unit_tests PRIVATE GTest::gtest_main ${COMMON_LIBS})
-# add_test(NAME unit_tests COMMAND unit_tests)
+# ---------------------------------------------------------------------------
+# DB unit tests (require a running PostgreSQL instance; skipped automatically
+# if the test database is unreachable).
+# Set JQ_TEST_DB env var to override the connection string.
+# ---------------------------------------------------------------------------
+add_executable(db_unit_tests
+    unit/db/migration_test.cc
+)
+target_include_directories(db_unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(db_unit_tests PRIVATE
+    jq_db
+    GTest::gtest_main
+)
+add_test(NAME db_unit_tests COMMAND db_unit_tests)

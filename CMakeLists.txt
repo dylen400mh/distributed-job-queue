@@ -90,9 +90,21 @@ target_include_directories(proto_gen PUBLIC ${PROTO_OUT_DIR})
 target_link_libraries(proto_gen PUBLIC gRPC::grpc++ protobuf::libprotobuf)
 
 # ---------------------------------------------------------------------------
+# jq_db — shared database layer (connection pool, repository base, migrations)
+# ---------------------------------------------------------------------------
+add_library(jq_db STATIC
+    src/common/db/connection_pool.cc
+    src/common/db/repository.cc
+    src/common/db/migrations.cc
+)
+target_include_directories(jq_db PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(jq_db PUBLIC PkgConfig::LIBPQXX)
+
+# ---------------------------------------------------------------------------
 # Common dependency set (linked by all three binaries)
 # ---------------------------------------------------------------------------
 set(COMMON_LIBS
+    jq_db
     proto_gen
     gRPC::grpc++
     gRPC::grpc

@@ -1,29 +1,37 @@
-# Prompt 2 — Protobuf & gRPC Service Definitions
+# Prompt 3 — Database Schema & Migrations
 
 ## Todo
 
-- [x] 1. Create proto/common.proto — JobStatus enum, WorkerStatus enum, Job/Queue/Worker messages (using google.protobuf.Timestamp for time fields)
-- [x] 2. Create proto/job_service.proto — JobService with 6 RPCs + all request/response messages
-- [x] 3. Create proto/worker_service.proto — WorkerService with 5 RPCs + all request/response messages (StreamJobs is server-streaming)
-- [x] 4. Create proto/admin_service.proto — AdminService with 8 RPCs + all request/response messages
-- [x] 5. Update CMakeLists.txt — add protoc + grpc_cpp_plugin code generation step; create a proto_gen static library; link it to all three binaries
-- [x] 6. Verify: cmake configure + build succeeds, all .proto files compile without errors
-- [x] 7. Append to docs/activity.md and push to git
+- [x] 1. Create db/migrations/V1__create_queues_table.sql
+- [x] 2. Create db/migrations/V2__create_workers_table.sql
+- [x] 3. Create db/migrations/V3__create_jobs_table.sql
+- [x] 4. Create db/migrations/V4__create_job_events_table.sql
+- [x] 5. Create db/migrations/V5__seed_default_queue.sql
+- [x] 6. Create src/common/db/connection_pool.h + connection_pool.cc
+- [x] 7. Create src/common/db/repository.h + repository.cc
+- [x] 8. Create src/common/db/migrations.h + migrations.cc
+- [x] 9. Update CMakeLists.txt — jq_db static library + test target
+- [x] 10. Create tests/unit/db/migration_test.cc
+- [x] 11. Update tests/CMakeLists.txt
+- [x] 12. Verify full build: zero warnings, all targets compile
+- [x] 13. Append to docs/activity.md and push to git
 
 ## Review
 
-All tasks completed successfully. Proto definitions are in place and wired into the build.
+All tasks completed successfully. Database schema and migration infrastructure are in place.
 
-**What was created:**
-- `proto/common.proto` — `JobStatus`/`WorkerStatus` enums; `Job`, `Queue`, `Worker`, `JobEvent` messages
-- `proto/job_service.proto` — `JobService` with 6 RPCs and all request/response types
-- `proto/worker_service.proto` — `WorkerService` with 5 RPCs (StreamJobs is server-streaming)
-- `proto/admin_service.proto` — `AdminService` with 8 RPCs including QueueStats and ComponentStatus messages
+**SQL migrations (db/migrations/):**
+- V1: `queues` table + `pgcrypto` extension for `gen_random_uuid()`
+- V2: `worker_status` enum + `workers` table + status/heartbeat indexes
+- V3: `job_status` enum + `jobs` table + 4 partial indexes (scheduler, heartbeat recovery, queue stats, retry scheduling)
+- V4: `job_events` append-only table + composite index on `(job_id, occurred_at)`
+- V5: Seeds the `default` queue with `ON CONFLICT DO NOTHING`
 
-**CMakeLists.txt changes:**
-- `add_custom_command` per `.proto` file runs protoc + grpc_cpp_plugin, generating `.pb.cc`/`.pb.h` and `.grpc.pb.cc`/`.grpc.pb.h`
-- `proto_gen` static library compiles all 8 generated `.cc` files; prepended to `COMMON_LIBS`
+**C++ db layer (src/common/db/):**
+- `ConnectionPool` — thread-safe FIFO pool of `pqxx::connection`; `BorrowedConnection` RAII handle returns/reconnects on destruction
+- `Repository` — base class exposing `Conn()` for subclasses (no raw SQL outside repositories)
+- `RunMigrations()` — creates `schema_migrations` tracker table, discovers `V*.sql` files, applies pending migrations in individual transactions
 
-**Fix:** Removed unused `import "common.proto"` from `worker_service.proto` (all messages use only primitive types).
+**Tests:** 3 tests in `tests/unit/db/migration_test.cc` — auto-skip if DB unreachable; set `JQ_TEST_DB` env var to override connection string
 
-**Build result:** 4 .proto files generate cleanly; `proto_gen` built from 8 generated source files; all three binaries linked successfully.
+**Fix:** libpqxx 7.10 deprecated `exec_params` and `exec1`; replaced with `exec(..., pqxx::params{})` and `exec(...).one_row()`

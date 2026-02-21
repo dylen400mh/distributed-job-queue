@@ -37,3 +37,23 @@
 7. Verified all .proto files compile cleanly with protoc (no warnings or errors)
 8. Updated CMakeLists.txt: added proto codegen via add_custom_command per .proto file; created proto_gen static library; added proto_gen to COMMON_LIBS
 9. Verified full cmake configure + build: proto_gen library built (8 generated .cc files), all three binaries linked successfully
+
+---
+
+### Prompt
+> [Prompt 3 — Database Schema & Migrations]
+> Create PostgreSQL migration files (Flyway naming), base Repository class with connection pool, RunMigrations() function, and unit tests.
+
+### Actions
+1. Created db/migrations/V1__create_queues_table.sql — queues table + pgcrypto extension
+2. Created db/migrations/V2__create_workers_table.sql — worker_status enum + workers table + 2 indexes
+3. Created db/migrations/V3__create_jobs_table.sql — job_status enum + jobs table + 4 partial indexes (scheduler, heartbeat recovery, queue stats, retry scheduling)
+4. Created db/migrations/V4__create_job_events_table.sql — append-only job_events table + index on (job_id, occurred_at)
+5. Created db/migrations/V5__seed_default_queue.sql — INSERT default queue with ON CONFLICT DO NOTHING
+6. Created src/common/db/connection_pool.h/.cc — thread-safe pool of pqxx::connection; BorrowedConnection RAII handle auto-returns and reconnects dropped connections
+7. Created src/common/db/repository.h/.cc — base Repository class exposing Conn() for subclasses
+8. Created src/common/db/migrations.h/.cc — RunMigrations(): schema_migrations tracker table, reads V*.sql sorted by version, applies pending in transactions
+9. Updated CMakeLists.txt: jq_db static library added to COMMON_LIBS; tests/CMakeLists.txt updated with db_unit_tests target
+10. Created tests/unit/db/migration_test.cc — 3 tests (apply all 5 migrations, default queue seeded, idempotency); auto-skips if DB unavailable
+11. Fixed libpqxx 7.10 deprecations: exec_params → exec with pqxx::params{}; exec1 → exec().one_row()
+12. Verified: zero warnings, full clean build
