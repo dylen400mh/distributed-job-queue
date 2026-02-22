@@ -1,37 +1,36 @@
-# Prompt 3 — Database Schema & Migrations
+# Prompt 4 — Configuration & Logging Infrastructure
 
 ## Todo
 
-- [x] 1. Create db/migrations/V1__create_queues_table.sql
-- [x] 2. Create db/migrations/V2__create_workers_table.sql
-- [x] 3. Create db/migrations/V3__create_jobs_table.sql
-- [x] 4. Create db/migrations/V4__create_job_events_table.sql
-- [x] 5. Create db/migrations/V5__seed_default_queue.sql
-- [x] 6. Create src/common/db/connection_pool.h + connection_pool.cc
-- [x] 7. Create src/common/db/repository.h + repository.cc
-- [x] 8. Create src/common/db/migrations.h + migrations.cc
-- [x] 9. Update CMakeLists.txt — jq_db static library + test target
-- [x] 10. Create tests/unit/db/migration_test.cc
-- [x] 11. Update tests/CMakeLists.txt
-- [x] 12. Verify full build: zero warnings, all targets compile
-- [x] 13. Append to docs/activity.md and push to git
+- [x] 1. Create src/common/config/config.h — Config struct (GrpcConfig, DbConfig, RedisConfig, KafkaConfig, SchedulerConfig, MetricsConfig, HealthConfig, LoggingConfig)
+- [x] 2. Create src/common/config/config.cc — LoadConfig(path) via yaml-cpp, env var overrides (JQ_* prefix), ValidateConfig(), sensitive field warning
+- [x] 3. Create src/common/config/flags.h — ParseFlags with getopt_long; ServerFlags, WorkerFlags, CtlFlags structs
+- [x] 4. Create src/common/logging/logger.h + logger.cc — spdlog JSON sink, InitLogger(), SetCorrelationId(), GetCorrelationId(), LOG_INFO/WARN/ERROR/DEBUG macros
+- [x] 5. Update src/server/main.cc — parse flags, load+validate config, init logger, --version, --help
+- [x] 6. Update src/worker/main.cc — same as server
+- [x] 7. Update src/ctl/main.cc — same as server
+- [x] 8. Create tests/unit/config/config_test.cc — test LoadConfig, env var overrides, sensitive field warning
+- [x] 9. Update CMakeLists.txt — jq_config + jq_log static libs; config test target
+- [x] 10. Verify full build compiles cleanly
+- [x] 11. Append to docs/activity.md and push to git
 
 ## Review
 
-All tasks completed successfully. Database schema and migration infrastructure are in place.
+### Summary of Changes
 
-**SQL migrations (db/migrations/):**
-- V1: `queues` table + `pgcrypto` extension for `gen_random_uuid()`
-- V2: `worker_status` enum + `workers` table + status/heartbeat indexes
-- V3: `job_status` enum + `jobs` table + 4 partial indexes (scheduler, heartbeat recovery, queue stats, retry scheduling)
-- V4: `job_events` append-only table + composite index on `(job_id, occurred_at)`
-- V5: Seeds the `default` queue with `ON CONFLICT DO NOTHING`
+**New libraries:**
+- `jq_config` — `config.cc` parses YAML with yaml-cpp, applies `JQ_*` env var overrides, detects credentials in YAML and produces `sensitive_field_warnings`
+- `jq_log` — `logger.cc` uses an spdlog null sink for level-filtering and writes structured JSON directly to stdout under a mutex; thread-local correlation ID is included automatically
 
-**C++ db layer (src/common/db/):**
-- `ConnectionPool` — thread-safe FIFO pool of `pqxx::connection`; `BorrowedConnection` RAII handle returns/reconnects on destruction
-- `Repository` — base class exposing `Conn()` for subclasses (no raw SQL outside repositories)
-- `RunMigrations()` — creates `schema_migrations` tracker table, discovers `V*.sql` files, applies pending migrations in individual transactions
+**New headers:**
+- `config.h` — Config struct hierarchy with sane defaults; `LoadConfig()` + `ValidateConfig()` declarations
+- `flags.h` — header-only `getopt_long` parsing for all three binaries with help/version printers
+- `logger.h` — `InitLogger`, `SetCorrelationId`, `GetCorrelationId`, `Log`, and `LOG_*` macros
 
-**Tests:** 3 tests in `tests/unit/db/migration_test.cc` — auto-skip if DB unreachable; set `JQ_TEST_DB` env var to override connection string
+**Updated binaries:**
+- All three `main.cc` files now parse flags, load/validate config (config optional for `jq-ctl`), init logger, emit sensitive-field warnings, log a startup message, and support `--version`/`--help`/`--dry-run` (server only)
 
-**Fix:** libpqxx 7.10 deprecated `exec_params` and `exec1`; replaced with `exec(..., pqxx::params{})` and `exec(...).one_row()`
+**Tests:**
+- 8 unit tests covering YAML parsing, env var overrides, sensitive-field detection, validation errors — all pass without any external services
+
+**Build:** Full clean build, zero warnings; 8/8 config unit tests pass.

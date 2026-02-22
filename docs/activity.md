@@ -57,3 +57,25 @@
 10. Created tests/unit/db/migration_test.cc — 3 tests (apply all 5 migrations, default queue seeded, idempotency); auto-skips if DB unavailable
 11. Fixed libpqxx 7.10 deprecations: exec_params → exec with pqxx::params{}; exec1 → exec().one_row()
 12. Verified: zero warnings, full clean build
+
+---
+
+### Prompt
+> [Prompt 4 — Configuration & Logging Infrastructure]
+> Build shared configuration parsing and structured logging used by all three binaries.
+
+### Actions
+1. Created src/common/config/config.h — Config struct hierarchy mirroring config.yaml layout: GrpcConfig, DbConfig, RedisConfig, KafkaConfig, SchedulerConfig, MetricsConfig, HealthConfig, LoggingConfig; sensitive_field_warnings field; LoadConfig() and ValidateConfig() declarations
+2. Created src/common/config/config.cc — LoadConfig(): parses YAML via yaml-cpp, detects sensitive fields (db.password, redis.password, kafka.sasl.*) in YAML and records warnings, applies 25+ JQ_* env var overrides (env vars always win); ValidateConfig(): checks required fields (db.host, db.user, redis.addr, kafka.brokers, valid grpc.port, batch_size > 0)
+3. Created src/common/config/flags.h — header-only getopt_long flag parsing; CommonFlags/ServerFlags/WorkerFlags/CtlFlags structs; ParseServerFlags/ParseWorkerFlags/ParseCtlFlags; PrintVersion/PrintServerHelp/PrintWorkerHelp/PrintCtlHelp
+4. Created src/common/logging/logger.h — InitLogger(), SetCorrelationId(), GetCorrelationId(), Log(), and LOG_INFO/LOG_WARN/LOG_ERROR/LOG_DEBUG macros
+5. Created src/common/logging/logger.cc — spdlog null_sink for level filtering only; JSON output built manually via nlohmann-json and written to stdout under a mutex; thread-local correlation ID; ISO-8601 UTC timestamps via gmtime_r
+6. Updated src/server/main.cc — ParseServerFlags, LoadConfig, ValidateConfig, InitLogger, flag overrides (grpc-port, metrics-port, health-port), --dry-run support, structured startup log
+7. Updated src/worker/main.cc — ParseWorkerFlags, LoadConfig, ValidateConfig, InitLogger, flag overrides, structured startup log
+8. Updated src/ctl/main.cc — ParseCtlFlags, optional config load (ctl can run without --config), InitLogger, structured startup log
+9. Added jq_config static lib to CMakeLists.txt (config.cc + yaml-cpp via pkg_check_modules)
+10. Added jq_log static lib to CMakeLists.txt (logger.cc + spdlog + nlohmann_json)
+11. Added both to COMMON_LIBS; added yaml-cpp pkg_check_modules call
+12. Created tests/unit/config/config_test.cc — 8 tests: defaults from minimal YAML, all YAML fields loaded, env var overrides, sensitive field warning detection, no warning when password absent, ValidateConfig errors on missing user, passes with minimal valid config, throws on missing file
+13. Updated tests/CMakeLists.txt: added config_unit_tests executable linking jq_config + GTest
+14. Verified: cmake configure clean, full build 100% successful, all 8 config unit tests pass

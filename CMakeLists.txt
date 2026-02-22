@@ -37,9 +37,10 @@ find_package(prometheus-cpp CONFIG REQUIRED)
 # ---------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
 
-pkg_check_modules(LIBPQXX REQUIRED IMPORTED_TARGET libpqxx)
-pkg_check_modules(HIREDIS REQUIRED IMPORTED_TARGET hiredis)
-pkg_check_modules(RDKAFKA REQUIRED IMPORTED_TARGET rdkafka++)
+pkg_check_modules(LIBPQXX  REQUIRED IMPORTED_TARGET libpqxx)
+pkg_check_modules(HIREDIS  REQUIRED IMPORTED_TARGET hiredis)
+pkg_check_modules(RDKAFKA  REQUIRED IMPORTED_TARGET rdkafka++)
+pkg_check_modules(YAML_CPP REQUIRED IMPORTED_TARGET yaml-cpp)
 
 # ---------------------------------------------------------------------------
 # Protobuf + gRPC code generation
@@ -90,6 +91,24 @@ target_include_directories(proto_gen PUBLIC ${PROTO_OUT_DIR})
 target_link_libraries(proto_gen PUBLIC gRPC::grpc++ protobuf::libprotobuf)
 
 # ---------------------------------------------------------------------------
+# jq_config — YAML config loader + validator
+# ---------------------------------------------------------------------------
+add_library(jq_config STATIC
+    src/common/config/config.cc
+)
+target_include_directories(jq_config PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(jq_config PUBLIC PkgConfig::YAML_CPP)
+
+# ---------------------------------------------------------------------------
+# jq_log — structured JSON logger
+# ---------------------------------------------------------------------------
+add_library(jq_log STATIC
+    src/common/logging/logger.cc
+)
+target_include_directories(jq_log PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(jq_log PUBLIC spdlog::spdlog nlohmann_json::nlohmann_json)
+
+# ---------------------------------------------------------------------------
 # jq_db — shared database layer (connection pool, repository base, migrations)
 # ---------------------------------------------------------------------------
 add_library(jq_db STATIC
@@ -104,6 +123,8 @@ target_link_libraries(jq_db PUBLIC PkgConfig::LIBPQXX)
 # Common dependency set (linked by all three binaries)
 # ---------------------------------------------------------------------------
 set(COMMON_LIBS
+    jq_config
+    jq_log
     jq_db
     proto_gen
     gRPC::grpc++
