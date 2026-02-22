@@ -54,3 +54,27 @@ target_link_libraries(kafka_unit_tests PRIVATE
     GTest::gtest_main
 )
 add_test(NAME kafka_unit_tests COMMAND kafka_unit_tests)
+
+# ---------------------------------------------------------------------------
+# Server unit tests — JobService RPC logic (no DB or Kafka required)
+# ---------------------------------------------------------------------------
+add_executable(server_unit_tests
+    unit/server/job_service_test.cc
+)
+target_include_directories(server_unit_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_BINARY_DIR}/proto_gen
+)
+target_link_libraries(server_unit_tests PRIVATE
+    jq_server_grpc
+    jq_server_db
+    jq_kafka
+    jq_metrics
+    jq_log
+    proto_gen
+    gRPC::grpc++
+    protobuf::libprotobuf
+    GTest::gtest_main
+    GTest::gmock
+)
+add_test(NAME server_unit_tests COMMAND server_unit_tests)

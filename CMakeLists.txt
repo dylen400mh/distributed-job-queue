@@ -189,11 +189,53 @@ set(COMMON_LIBS
 )
 
 # ---------------------------------------------------------------------------
+# jq_server_db — server-side job repository
+# ---------------------------------------------------------------------------
+add_library(jq_server_db STATIC
+    src/server/db/job_repository.cc
+)
+target_include_directories(jq_server_db PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(jq_server_db PUBLIC jq_db jq_log PkgConfig::LIBPQXX)
+
+# ---------------------------------------------------------------------------
+# jq_server_grpc — JobService, WorkerService, AdminService + GrpcServer
+# ---------------------------------------------------------------------------
+add_library(jq_server_grpc STATIC
+    src/server/grpc/job_service_impl.cc
+    src/server/grpc/server.cc
+)
+target_include_directories(jq_server_grpc PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${PROTO_OUT_DIR}
+)
+target_link_libraries(jq_server_grpc PUBLIC
+    jq_server_db
+    jq_kafka
+    jq_log
+    proto_gen
+    gRPC::grpc++
+    protobuf::libprotobuf
+)
+
+# ---------------------------------------------------------------------------
+# jq_server_health — HTTP /healthz + /readyz server
+# ---------------------------------------------------------------------------
+add_library(jq_server_health STATIC
+    src/server/health/health_server.cc
+)
+target_include_directories(jq_server_health PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(jq_server_health PUBLIC jq_db jq_redis jq_kafka jq_log PkgConfig::LIBPQXX)
+
+# ---------------------------------------------------------------------------
 # jq-server
 # ---------------------------------------------------------------------------
 add_executable(jq-server src/server/main.cc)
 target_include_directories(jq-server PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(jq-server PRIVATE ${COMMON_LIBS})
+target_link_libraries(jq-server PRIVATE
+    jq_server_grpc
+    jq_server_health
+    ${COMMON_LIBS}
+)
 
 # ---------------------------------------------------------------------------
 # jq-worker

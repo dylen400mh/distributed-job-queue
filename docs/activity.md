@@ -107,3 +107,31 @@
 9. Created tests/unit/kafka/kafka_delivery_test.cc — 4 tests: counter increments on failure, independent per-topic counters, all six topics handled, success path no phantom counters
 10. Added redis_unit_tests + kafka_unit_tests targets to tests/CMakeLists.txt
 11. Verified: cmake configure clean, full build 100% successful, 5/5 redis + 4/4 kafka + 8/8 config = 17/17 unit tests pass
+
+---
+
+### Prompt
+> [Prompt 6 — jq-server gRPC Server & JobService]
+> Implement the jq-server gRPC server and JobService. Build GrpcServer, health server, replace main.cc, write unit tests.
+
+### Actions
+1. Added `IKafkaProducer` interface to `src/common/kafka/kafka_producer.h`; `KafkaProducer` now implements it (consistent with `IRedisLockable` pattern)
+2. Created `src/server/db/job_repository.h` — `JobRow`, `JobEventRow` structs + `IJobRepository` interface
+3. Created `src/server/db/job_repository.cc` — concrete `JobRepository`:
+   - `QueueExists`, `GetQueueMaxRetries`, `InsertJob` (job + initial job_event in one txn), `FindJobById`, `TransitionJobStatus` (update + event in one txn; sets started_at/completed_at per status), `ResetJobForRetry`, `ListJobs`, `ListJobEvents`
+   - Fixed pqxx 7.10 issue: pqxx::bytes is std::basic_string<std::byte>; requires explicit cast to/from uint8_t; use txn.quote() not exec_params()
+4. Created `src/server/grpc/job_service_impl.h/.cc` — all 6 RPCs with correct gRPC status codes:
+   - SubmitJob: NOT_FOUND on missing queue, INTERNAL on DB error, publishes job.submitted
+   - CancelJob: FAILED_PRECONDITION if not PENDING/ASSIGNED, transitions to DEAD_LETTERED, publishes job.dead-lettered
+   - GetJobStatus: NOT_FOUND if missing, maps DB row → proto Job
+   - ListJobs: limit+1 trick for pagination; next_page_token is base-10 offset
+   - GetJobLogs: returns ordered job_events as proto JobEvent messages
+   - RetryJob: FAILED_PRECONDITION if not FAILED/DEAD_LETTERED, resets to PENDING
+5. Created `src/server/grpc/worker_service_impl.h` and `admin_service_impl.h` — header-only UNIMPLEMENTED stubs
+6. Created `src/server/grpc/server.h/.cc` — `GrpcServer`: registers all three services; `Start()` blocks on `server->Wait()`; `Stop()` drains with 30s deadline
+7. Created `src/server/health/health_server.h/.cc` — POSIX TCP accept loop in background thread; /healthz always 200; /readyz checks DB SELECT 1 + RedisClient::IsConnected()
+8. Replaced `src/server/main.cc` — full startup: flags → config → logger → metrics → DB pool + Kafka + Redis → dry-run checks (FR-046) → migrations → health server → signal handlers → gRPC server (blocks) → graceful shutdown (flush Kafka)
+9. Added `jq_server_db`, `jq_server_grpc`, `jq_server_health` static libs to CMakeLists.txt; added `server_unit_tests` target
+10. Created `tests/unit/server/job_service_test.cc` — 15 tests across all 6 RPCs using MockJobRepository + MockKafkaProducer
+11. Fixed build error: ternary with const char* cannot be + to const char[] literal; extracted to std::string locals
+12. Verified: full clean build, zero errors; 15/15 server + 5/5 redis + 4/4 kafka + 8/8 config = 32/32 unit tests pass

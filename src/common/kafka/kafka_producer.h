@@ -26,6 +26,18 @@ inline constexpr const char* kWorkerHeartbeat = "worker.heartbeat";
 }  // namespace KafkaTopics
 
 // ---------------------------------------------------------------------------
+// IKafkaProducer — minimal interface for mock injection in tests.
+// ---------------------------------------------------------------------------
+class IKafkaProducer {
+public:
+    virtual ~IKafkaProducer() = default;
+    virtual void Publish(const std::string&         topic,
+                         const std::string&         key,
+                         const std::vector<uint8_t>& payload) = 0;
+    virtual void Flush(int timeout_ms = 5000) = 0;
+};
+
+// ---------------------------------------------------------------------------
 // KafkaProducer — async producer wrapping librdkafka C++ API.
 //
 // Publish() is fire-and-forget (librdkafka buffers internally).
@@ -33,7 +45,7 @@ inline constexpr const char* kWorkerHeartbeat = "worker.heartbeat";
 // jq_kafka_publish_errors_total.
 // Call Flush() during graceful shutdown to drain the producer queue.
 // ---------------------------------------------------------------------------
-class KafkaProducer {
+class KafkaProducer : public IKafkaProducer {
 public:
     explicit KafkaProducer(const KafkaConfig& cfg);
     ~KafkaProducer();
@@ -45,10 +57,10 @@ public:
     // key and payload are copied into librdkafka's internal buffer.
     void Publish(const std::string&         topic,
                  const std::string&         key,
-                 const std::vector<uint8_t>& payload);
+                 const std::vector<uint8_t>& payload) override;
 
     // Block until all queued messages are delivered or timeout_ms elapses.
-    void Flush(int timeout_ms = 5000);
+    void Flush(int timeout_ms = 5000) override;
 
 private:
     std::unique_ptr<RdKafka::Producer> producer_;
