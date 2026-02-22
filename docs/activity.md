@@ -79,3 +79,31 @@
 12. Created tests/unit/config/config_test.cc — 8 tests: defaults from minimal YAML, all YAML fields loaded, env var overrides, sensitive field warning detection, no warning when password absent, ValidateConfig errors on missing user, passes with minimal valid config, throws on missing file
 13. Updated tests/CMakeLists.txt: added config_unit_tests executable linking jq_config + GTest
 14. Verified: cmake configure clean, full build 100% successful, all 8 config unit tests pass
+
+---
+
+### Prompt
+> [Prompt 5 — Redis, Kafka, and Metrics Clients]
+> Build the Redis and Kafka client wrapper classes in src/common/ and all FR-040 metrics.
+
+### Actions
+1. Read design-notes.md (Caching & Fast State, Event Streaming, Error Handling Conventions), tech-stack.md, requirements.md (FR-040), and existing source for context
+2. Note: redis-plus-plus is not available via Homebrew; implemented using raw hiredis C API instead
+3. Created src/common/metrics/metrics.h + metrics.cc — 11 FR-040 metric families (Gauge/Counter/Histogram) as static singletons; StartMetricsServer(port) starts the prometheus-cpp HTTP exposer thread
+4. Created src/common/redis/redis_client.h + redis_client.cc:
+   - IRedisLockable interface (SetNxPx + Del) for mock injection in tests
+   - RedisClient implements IRedisLockable; wraps hiredis for SetNxPx, Del, Get, Set, Incr, Expire; auto-reconnects on connection loss; all errors caught and logged — never crashes the process
+   - DistributedLock RAII: acquires lock:job:<key> on construction (throws on failure), releases via Del on destruction
+   - OpTimer helper observes jq_redis_operation_duration_seconds per operation
+5. Created src/common/kafka/kafka_producer.h + kafka_producer.cc:
+   - KafkaTopics namespace with six topic-name constants
+   - KafkaProducer wraps librdkafka; async Publish with auto-poll; Flush for graceful shutdown
+   - DeliveryReportCb: DEBUG log on success; ERROR log + jq_kafka_publish_errors_total increment on failure
+6. Created src/common/kafka/kafka_consumer.h + kafka_consumer.cc:
+   - KafkaConsumer with Poll (returns optional<KafkaMessage>), Commit (async), Close
+   - auto.commit disabled — callers control offset commits
+7. Added jq_metrics, jq_redis, jq_kafka static libraries to CMakeLists.txt; all added to COMMON_LIBS
+8. Created tests/unit/redis/distributed_lock_test.cc — 5 tests using gmock MockRedis: acquire+release, throw on contention, correct key prefix, Del called exactly once, default TTL 60s
+9. Created tests/unit/kafka/kafka_delivery_test.cc — 4 tests: counter increments on failure, independent per-topic counters, all six topics handled, success path no phantom counters
+10. Added redis_unit_tests + kafka_unit_tests targets to tests/CMakeLists.txt
+11. Verified: cmake configure clean, full build 100% successful, 5/5 redis + 4/4 kafka + 8/8 config = 17/17 unit tests pass

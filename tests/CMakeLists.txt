@@ -27,3 +27,30 @@ target_link_libraries(config_unit_tests PRIVATE
     GTest::gtest_main
 )
 add_test(NAME config_unit_tests COMMAND config_unit_tests)
+
+# ---------------------------------------------------------------------------
+# Redis unit tests — DistributedLock RAII behaviour (no Redis required)
+# ---------------------------------------------------------------------------
+add_executable(redis_unit_tests
+    unit/redis/distributed_lock_test.cc
+)
+target_include_directories(redis_unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(redis_unit_tests PRIVATE
+    jq_redis
+    GTest::gtest_main
+    GTest::gmock
+)
+add_test(NAME redis_unit_tests COMMAND redis_unit_tests)
+
+# ---------------------------------------------------------------------------
+# Kafka unit tests — delivery report error path (no Kafka required)
+# ---------------------------------------------------------------------------
+add_executable(kafka_unit_tests
+    unit/kafka/kafka_delivery_test.cc
+)
+target_include_directories(kafka_unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(kafka_unit_tests PRIVATE
+    jq_metrics
+    GTest::gtest_main
+)
+add_test(NAME kafka_unit_tests COMMAND kafka_unit_tests)

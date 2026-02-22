@@ -109,6 +109,47 @@ target_include_directories(jq_log PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(jq_log PUBLIC spdlog::spdlog nlohmann_json::nlohmann_json)
 
 # ---------------------------------------------------------------------------
+# jq_metrics — prometheus-cpp metric definitions (FR-040)
+# ---------------------------------------------------------------------------
+add_library(jq_metrics STATIC
+    src/common/metrics/metrics.cc
+)
+target_include_directories(jq_metrics PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(jq_metrics PUBLIC
+    prometheus-cpp::pull
+    prometheus-cpp::core
+)
+
+# ---------------------------------------------------------------------------
+# jq_redis — hiredis-backed RedisClient + DistributedLock
+# ---------------------------------------------------------------------------
+add_library(jq_redis STATIC
+    src/common/redis/redis_client.cc
+)
+target_include_directories(jq_redis PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(jq_redis PUBLIC
+    jq_metrics
+    jq_log
+    jq_config
+    PkgConfig::HIREDIS
+)
+
+# ---------------------------------------------------------------------------
+# jq_kafka — librdkafka producer + consumer wrappers
+# ---------------------------------------------------------------------------
+add_library(jq_kafka STATIC
+    src/common/kafka/kafka_producer.cc
+    src/common/kafka/kafka_consumer.cc
+)
+target_include_directories(jq_kafka PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(jq_kafka PUBLIC
+    jq_metrics
+    jq_log
+    jq_config
+    PkgConfig::RDKAFKA
+)
+
+# ---------------------------------------------------------------------------
 # jq_db — shared database layer (connection pool, repository base, migrations)
 # ---------------------------------------------------------------------------
 add_library(jq_db STATIC
@@ -126,6 +167,9 @@ set(COMMON_LIBS
     jq_config
     jq_log
     jq_db
+    jq_metrics
+    jq_redis
+    jq_kafka
     proto_gen
     gRPC::grpc++
     gRPC::grpc
