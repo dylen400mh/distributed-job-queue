@@ -336,4 +336,174 @@ std::vector<JobEventRow> JobRepository::ListJobEvents(const std::string& job_id)
     }
 }
 
+// ---------------------------------------------------------------------------
+// FetchPendingBatch
+// ---------------------------------------------------------------------------
+
+std::vector<JobRow> JobRepository::FetchPendingBatch(int batch_size) {
+    try {
+        auto c = Conn();
+        pqxx::work txn(c.get());
+        std::string sql = std::string(kJobSelect) +
+            "WHERE status = 'PENDING'::job_status "
+            "  AND (not_before IS NULL OR not_before <= now()) "
+            "ORDER BY priority DESC, created_at ASC "
+            "LIMIT " + std::to_string(batch_size);
+        auto r = txn.exec(sql);
+        txn.commit();
+        std::vector<JobRow> jobs;
+        jobs.reserve(r.size());
+        for (const auto& row : r) jobs.push_back(RowToJob(row));
+        return jobs;
+    } catch (const std::exception& e) {
+        LOG_ERROR("FetchPendingBatch failed", {{"error", e.what()}});
+        throw;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SetJobRetry
+// ---------------------------------------------------------------------------
+
+bool JobRepository::SetJobRetry(const std::string& job_id,
+                                 int                new_retry_count,
+                                 int64_t            not_before_epoch) {
+    try {
+        auto c = Conn();
+        pqxx::work txn(c.get());
+
+        auto r = txn.exec(
+            "UPDATE jobs "
+            "SET status = 'PENDING'::job_status, "
+            "    retry_count = " + std::to_string(new_retry_count) + ", "
+            "    not_before = to_timestamp(" + std::to_string(not_before_epoch) + "), "
+            "    completed_at = NULL, updated_at = now() "
+            "WHERE job_id = " + txn.quote(job_id) + "::uuid "
+            "  AND status = 'FAILED'::job_status "
+            "RETURNING job_id");
+
+        if (r.empty()) {
+            txn.abort();
+            return false;
+        }
+
+        txn.exec(
+            "INSERT INTO job_events (job_id, from_status, to_status, reason) "
+            "VALUES (" + txn.quote(job_id) + "::uuid, "
+            "'FAILED'::job_status, 'PENDING'::job_status, 'RETRY')");
+
+        txn.commit();
+        return true;
+    } catch (const std::exception& e) {
+        LOG_ERROR("SetJobRetry failed", {{"job_id", job_id}, {"error", e.what()}});
+        throw;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FetchExpiredTtlJobs
+// ---------------------------------------------------------------------------
+
+std::vector<JobRow> JobRepository::FetchExpiredTtlJobs() {
+    try {
+        auto c = Conn();
+        pqxx::work txn(c.get());
+        // kJobSelect references the "jobs" table; replicate it with alias here.
+        std::string sql =
+            "SELECT j.job_id::text, j.queue_name, j.payload, j.priority, j.status::text, "
+            "       j.max_retries, j.retry_count, "
+            "       j.worker_id::text, j.result, j.error_message, "
+            "       EXTRACT(EPOCH FROM j.created_at)   AS created_epoch, "
+            "       EXTRACT(EPOCH FROM j.started_at)   AS started_epoch, "
+            "       EXTRACT(EPOCH FROM j.completed_at) AS completed_epoch, "
+            "       EXTRACT(EPOCH FROM j.not_before)   AS not_before_epoch "
+            "FROM jobs j "
+            "JOIN queues q ON q.name = j.queue_name "
+            "WHERE j.status = 'PENDING'::job_status "
+            "  AND q.ttl_seconds IS NOT NULL "
+            "  AND j.created_at + q.ttl_seconds * interval '1 second' < now()";
+        auto r = txn.exec(sql);
+        txn.commit();
+        std::vector<JobRow> jobs;
+        jobs.reserve(r.size());
+        for (const auto& row : r) jobs.push_back(RowToJob(row));
+        return jobs;
+    } catch (const std::exception& e) {
+        LOG_ERROR("FetchExpiredTtlJobs failed", {{"error", e.what()}});
+        throw;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FetchJobsForWorker
+// ---------------------------------------------------------------------------
+
+std::vector<JobRow> JobRepository::FetchJobsForWorker(const std::string& worker_id) {
+    try {
+        auto c = Conn();
+        pqxx::work txn(c.get());
+        std::string sql = std::string(kJobSelect) +
+            "WHERE worker_id = " + txn.quote(worker_id) + "::uuid "
+            "  AND status IN ('ASSIGNED'::job_status, 'RUNNING'::job_status)";
+        auto r = txn.exec(sql);
+        txn.commit();
+        std::vector<JobRow> jobs;
+        jobs.reserve(r.size());
+        for (const auto& row : r) jobs.push_back(RowToJob(row));
+        return jobs;
+    } catch (const std::exception& e) {
+        LOG_ERROR("FetchJobsForWorker failed",
+                  {{"worker_id", worker_id}, {"error", e.what()}});
+        throw;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// StoreJobResult
+// ---------------------------------------------------------------------------
+
+bool JobRepository::StoreJobResult(const std::string&          job_id,
+                                    bool                        success,
+                                    const std::vector<uint8_t>& result,
+                                    const std::string&          error_message,
+                                    const std::string&          worker_id) {
+    try {
+        auto c = Conn();
+        pqxx::work txn(c.get());
+
+        const std::string new_status = success ? "DONE" : "FAILED";
+        pqxx::bytes result_bytes = ToBytes(result);
+
+        auto r = txn.exec(
+            "UPDATE jobs "
+            "SET status = '" + new_status + "'::job_status, "
+            "    result = " + txn.quote(result_bytes) + ", "
+            "    error_message = " + txn.quote(error_message) + ", "
+            "    completed_at = now(), updated_at = now() "
+            "WHERE job_id = " + txn.quote(job_id) + "::uuid "
+            "  AND status = 'RUNNING'::job_status "
+            "RETURNING job_id");
+
+        if (r.empty()) {
+            txn.abort();
+            return false;
+        }
+
+        std::string extra_col = worker_id.empty() ? std::string{} : std::string{", worker_id"};
+        std::string extra_val = worker_id.empty() ? std::string{} :
+            (", " + txn.quote(worker_id) + "::uuid");
+        txn.exec(
+            "INSERT INTO job_events (job_id, from_status, to_status, reason" + extra_col + ") "
+            "VALUES (" + txn.quote(job_id) + "::uuid, "
+            "'RUNNING'::job_status, '" + new_status + "'::job_status, "
+            "'" + (success ? "SUCCESS" : "FAILURE") + "'" + extra_val + ")");
+
+        txn.commit();
+        return true;
+    } catch (const std::exception& e) {
+        LOG_ERROR("StoreJobResult failed", {{"job_id", job_id}, {"error", e.what()}});
+        throw;
+    }
+}
+
 }  // namespace jq::db

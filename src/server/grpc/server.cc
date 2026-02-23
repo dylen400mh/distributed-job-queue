@@ -1,6 +1,7 @@
 #include "server/grpc/server.h"
 
 #include <chrono>
+#include <stdexcept>
 #include <string>
 
 #include <grpcpp/grpcpp.h>
@@ -15,7 +16,12 @@ GrpcServer::GrpcServer(const Config&       cfg,
                         IKafkaProducer&     kafka)
     : cfg_(cfg)
     , job_repo_(pool)
+    , worker_repo_(pool)
+    , registry_()
     , job_svc_(job_repo_, kafka)
+    , worker_svc_(job_repo_, worker_repo_, kafka, registry_)
+    , admin_svc_()
+    , scheduler_(pool, cfg.redis, kafka, registry_, cfg.scheduler)
 {}
 
 void GrpcServer::Start() {
@@ -27,7 +33,6 @@ void GrpcServer::Start() {
     if (cfg_.grpc.tls.enabled) {
         grpc::SslServerCredentialsOptions ssl_opts;
         grpc::SslServerCredentialsOptions::PemKeyCertPair kp;
-        // In production, cert/key are read from files; simplified here.
         ssl_opts.pem_key_cert_pairs.push_back(kp);
         builder.AddListeningPort(addr, grpc::SslServerCredentials(ssl_opts));
     } else {
@@ -44,12 +49,17 @@ void GrpcServer::Start() {
     }
 
     LOG_INFO("gRPC server listening", {{"addr", addr}});
+
+    // Start scheduler after gRPC server is up.
+    scheduler_.Start();
+
     server_->Wait();  // blocks until Stop() is called
 }
 
 void GrpcServer::Stop() {
     if (!server_) return;
     LOG_INFO("gRPC server shutting down");
+    scheduler_.Stop();
     // Give in-flight RPCs up to 30 s to complete (design-notes.md §Graceful Shutdown).
     auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(30);
     server_->Shutdown(deadline);

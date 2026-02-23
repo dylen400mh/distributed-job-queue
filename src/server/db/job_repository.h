@@ -89,6 +89,39 @@ public:
 
     // Fetch all job_events for a job in chronological order.
     virtual std::vector<JobEventRow> ListJobEvents(const std::string& job_id) = 0;
+
+    // ---------------------------------------------------------------------------
+    // Scheduler-specific methods
+    // ---------------------------------------------------------------------------
+
+    // Fetch up to batch_size PENDING jobs WHERE not_before IS NULL OR not_before <= now()
+    // ORDER BY priority DESC, created_at ASC.
+    virtual std::vector<JobRow> FetchPendingBatch(int batch_size) = 0;
+
+    // Transition a FAILED job back to PENDING with retry backoff.
+    // Sets retry_count = new_retry_count, not_before = to_timestamp(not_before_epoch),
+    // inserts job_event (FAILED → PENDING, reason=RETRY).
+    // Returns false if job not found or status != FAILED.
+    virtual bool SetJobRetry(const std::string& job_id,
+                              int                new_retry_count,
+                              int64_t            not_before_epoch) = 0;
+
+    // Fetch PENDING jobs whose queue TTL has expired:
+    //   jobs.created_at + queues.ttl_seconds * interval '1 second' < now()
+    // Only returns jobs from queues where ttl_seconds IS NOT NULL.
+    virtual std::vector<JobRow> FetchExpiredTtlJobs() = 0;
+
+    // Fetch ASSIGNED or RUNNING jobs belonging to a specific worker.
+    virtual std::vector<JobRow> FetchJobsForWorker(const std::string& worker_id) = 0;
+
+    // Store the result of a RUNNING job (success → DONE, failure → FAILED).
+    // Stores result bytes and error_message. Inserts a job_event row.
+    // Returns false if job not found or not in RUNNING status.
+    virtual bool StoreJobResult(const std::string&          job_id,
+                                 bool                        success,
+                                 const std::vector<uint8_t>& result,
+                                 const std::string&          error_message,
+                                 const std::string&          worker_id) = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -123,6 +156,22 @@ public:
                                   int                offset) override;
 
     std::vector<JobEventRow> ListJobEvents(const std::string& job_id) override;
+
+    std::vector<JobRow> FetchPendingBatch(int batch_size) override;
+
+    bool SetJobRetry(const std::string& job_id,
+                     int                new_retry_count,
+                     int64_t            not_before_epoch) override;
+
+    std::vector<JobRow> FetchExpiredTtlJobs() override;
+
+    std::vector<JobRow> FetchJobsForWorker(const std::string& worker_id) override;
+
+    bool StoreJobResult(const std::string&          job_id,
+                         bool                        success,
+                         const std::vector<uint8_t>& result,
+                         const std::string&          error_message,
+                         const std::string&          worker_id) override;
 };
 
 }  // namespace jq::db

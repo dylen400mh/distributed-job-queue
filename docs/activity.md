@@ -135,3 +135,23 @@
 10. Created `tests/unit/server/job_service_test.cc` — 15 tests across all 6 RPCs using MockJobRepository + MockKafkaProducer
 11. Fixed build error: ternary with const char* cannot be + to const char[] literal; extracted to std::string locals
 12. Verified: full clean build, zero errors; 15/15 server + 5/5 redis + 4/4 kafka + 8/8 config = 32/32 unit tests pass
+
+---
+
+### Prompt
+> [Prompt 7 — Scheduler Loop, WorkerService & WorkerRegistry]
+> Implement the Scheduler loop, WorkerService RPCs, and WorkerRegistry for jq-server.
+
+### Actions
+1. Extended `IJobRepository` + `JobRepository` with 5 new methods: `FetchPendingBatch`, `SetJobRetry`, `FetchExpiredTtlJobs`, `FetchJobsForWorker`, `StoreJobResult`
+2. Created `src/server/db/worker_repository.h/.cc` — `WorkerRow`, `IWorkerRepository`, `WorkerRepository` (UpsertWorker via INSERT ... ON CONFLICT, FetchStaleWorkers for heartbeat timeout detection)
+3. Created `src/server/scheduler/worker_registry.h/.cc` — `StreamHandle` with `std::function<bool(const JobAssignment&)>` write callback (instead of raw `grpc::ServerWriter*` which is `final`), mutex, active flag; `WorkerRegistry` with thread-safe `AssignJob` (per-worker concurrency limit, rollback on write failure), `RegisterStream`, `RemoveWorker`, `DecrementActiveCount`, `GetWorkerStats`
+4. Created `src/server/scheduler/scheduler.h/.cc` — two threads: `RunLoop()` (500ms cycle: FetchPendingBatch → Redis SetNxPx lock → PENDING→ASSIGNED transition → Kafka event → WorkerRegistry::AssignJob; plus TTL expiry via FetchExpiredTtlJobs) and `HeartbeatMonitor()` (10s cycle: FetchStaleWorkers → mark OFFLINE → apply retry/dead-letter). `CalculateRetryNotBefore()` exposed as a pure free function for testability
+5. Replaced `src/server/grpc/worker_service_impl.h` stub with full class header; created `worker_service_impl.cc` — all 5 RPCs: RegisterWorker, Heartbeat, StreamJobs (lambda wraps `ServerWriter::Write`; polls `handle->active`), ReportResult (validate RUNNING state, StoreJobResult, retry logic), Deregister
+6. Updated `src/server/grpc/server.h/.cc` — added `WorkerRepository`, `WorkerRegistry`, `Scheduler` members; `Start()` calls `scheduler_.Start()`; `Stop()` calls `scheduler_.Stop()` first
+7. Updated `CMakeLists.txt` — new `jq_server_scheduler` static lib; `worker_repository.cc` added to `jq_server_db`; `worker_service_impl.cc` added to `jq_server_grpc`; `jq_server_grpc` deps include `jq_server_scheduler`
+8. Updated `tests/CMakeLists.txt` — added `scheduler_unit_tests` executable; added `absl::base/strings/synchronization` to link set
+9. Updated `tests/unit/server/job_service_test.cc` — added 5 `MOCK_METHOD` entries to `MockJobRepository` for the new pure virtuals
+10. Created `tests/unit/server/scheduler_test.cc` — 12 tests: 5 `BackoffTest` (formula verification) + 7 `WorkerRegistryTest` (no workers, wrong queue, matching worker, concurrency limit, decrement allows next, remove prevents assign, write failure count rollback)
+11. Fixed toolchain: added `CMAKE_EXE_LINKER_FLAGS` in `cmake/toolchain-macos.cmake` pointing to `/opt/homebrew/opt/llvm/lib/c++` so `std::__1::__hash_memory` (Homebrew LLVM 21 libc++ ABI symbol required by `std::unordered_map<std::string, ...>`) resolves at link time
+12. Verified: full clean build, zero errors; 12/12 scheduler + 15/15 server + 5/5 redis + 4/4 kafka + 8/8 config = 44/44 unit tests pass (db_unit_tests skipped — requires running PostgreSQL)

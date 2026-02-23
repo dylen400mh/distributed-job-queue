@@ -78,3 +78,31 @@ target_link_libraries(server_unit_tests PRIVATE
     GTest::gmock
 )
 add_test(NAME server_unit_tests COMMAND server_unit_tests)
+
+# ---------------------------------------------------------------------------
+# Scheduler unit tests — backoff formula, WorkerRegistry, heartbeat logic
+# (no external services required)
+# ---------------------------------------------------------------------------
+add_executable(scheduler_unit_tests
+    unit/server/scheduler_test.cc
+)
+target_include_directories(scheduler_unit_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_BINARY_DIR}/proto_gen
+)
+target_link_libraries(scheduler_unit_tests PRIVATE
+    jq_server_scheduler
+    jq_server_db
+    jq_kafka
+    jq_metrics
+    jq_log
+    proto_gen
+    gRPC::grpc++
+    protobuf::libprotobuf
+    absl::base
+    absl::strings
+    absl::synchronization
+    GTest::gtest_main
+    GTest::gmock
+)
+add_test(NAME scheduler_unit_tests COMMAND scheduler_unit_tests)

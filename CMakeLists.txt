@@ -189,19 +189,43 @@ set(COMMON_LIBS
 )
 
 # ---------------------------------------------------------------------------
-# jq_server_db — server-side job repository
+# jq_server_db — server-side job + worker repositories
 # ---------------------------------------------------------------------------
 add_library(jq_server_db STATIC
     src/server/db/job_repository.cc
+    src/server/db/worker_repository.cc
 )
 target_include_directories(jq_server_db PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(jq_server_db PUBLIC jq_db jq_log PkgConfig::LIBPQXX)
+
+# ---------------------------------------------------------------------------
+# jq_server_scheduler — WorkerRegistry + Scheduler loop
+# ---------------------------------------------------------------------------
+add_library(jq_server_scheduler STATIC
+    src/server/scheduler/worker_registry.cc
+    src/server/scheduler/scheduler.cc
+)
+target_include_directories(jq_server_scheduler PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${PROTO_OUT_DIR}
+)
+target_link_libraries(jq_server_scheduler PUBLIC
+    jq_server_db
+    jq_redis
+    jq_kafka
+    jq_metrics
+    jq_log
+    proto_gen
+    gRPC::grpc++
+    protobuf::libprotobuf
+)
 
 # ---------------------------------------------------------------------------
 # jq_server_grpc — JobService, WorkerService, AdminService + GrpcServer
 # ---------------------------------------------------------------------------
 add_library(jq_server_grpc STATIC
     src/server/grpc/job_service_impl.cc
+    src/server/grpc/worker_service_impl.cc
     src/server/grpc/server.cc
 )
 target_include_directories(jq_server_grpc PUBLIC
@@ -210,6 +234,7 @@ target_include_directories(jq_server_grpc PUBLIC
 )
 target_link_libraries(jq_server_grpc PUBLIC
     jq_server_db
+    jq_server_scheduler
     jq_kafka
     jq_log
     proto_gen

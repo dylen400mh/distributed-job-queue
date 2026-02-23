@@ -41,6 +41,18 @@ public:
                 (const std::string&, const std::string&, int, int), (override));
     MOCK_METHOD(std::vector<jq::db::JobEventRow>, ListJobEvents,
                 (const std::string&), (override));
+    MOCK_METHOD(std::vector<jq::db::JobRow>, FetchPendingBatch,
+                (int), (override));
+    MOCK_METHOD(bool, SetJobRetry,
+                (const std::string&, int, int64_t), (override));
+    MOCK_METHOD(std::vector<jq::db::JobRow>, FetchExpiredTtlJobs,
+                (), (override));
+    MOCK_METHOD(std::vector<jq::db::JobRow>, FetchJobsForWorker,
+                (const std::string&), (override));
+    MOCK_METHOD(bool, StoreJobResult,
+                (const std::string&, bool,
+                 const std::vector<uint8_t>&, const std::string&, const std::string&),
+                (override));
 };
 
 class MockKafkaProducer : public jq::IKafkaProducer {
