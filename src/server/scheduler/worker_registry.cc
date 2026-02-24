@@ -73,6 +73,7 @@ bool WorkerRegistry::AssignJob(const std::string&          job_id,
         std::lock_guard<std::mutex> lock(mu_);
         for (auto& [wid, info] : workers_) {
             if (!info.stream) continue;
+            if (info.draining) continue;
             if (info.active_job_count >= info.concurrency) continue;
             bool subscribed = std::find(info.queues.begin(), info.queues.end(), queue_name)
                               != info.queues.end();
@@ -122,6 +123,19 @@ bool WorkerRegistry::AssignJob(const std::string&          job_id,
     LOG_INFO("Job assigned to worker",
              {{"job_id", job_id}, {"worker_id", chosen_id}, {"queue", queue_name}});
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// DrainWorker
+// ---------------------------------------------------------------------------
+
+void WorkerRegistry::DrainWorker(const std::string& worker_id) {
+    std::lock_guard<std::mutex> lock(mu_);
+    auto it = workers_.find(worker_id);
+    if (it != workers_.end()) {
+        it->second.draining = true;
+        LOG_INFO("Worker set to draining", {{"worker_id", worker_id}});
+    }
 }
 
 // ---------------------------------------------------------------------------

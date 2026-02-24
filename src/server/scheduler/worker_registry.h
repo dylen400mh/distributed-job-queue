@@ -41,6 +41,7 @@ struct WorkerInfo {
     std::vector<std::string> queues;            // subscribed queue names
     int                      concurrency      = 4;
     int                      active_job_count = 0;
+    bool                     draining         = false; // set by DrainWorker()
     std::shared_ptr<StreamHandle> stream;       // null if not currently streaming
 };
 
@@ -81,6 +82,10 @@ public:
                    const std::string&          queue_name,
                    const std::vector<uint8_t>& payload,
                    int                         priority);
+
+    // Mark a worker as draining: no new jobs are assigned, but it finishes
+    // its current jobs. Called by AdminService::DrainWorker.
+    void DrainWorker(const std::string& worker_id);
 
     // Return a snapshot of all registered workers (for AdminService).
     std::vector<WorkerInfo> GetWorkerStats();

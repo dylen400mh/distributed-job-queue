@@ -16,11 +16,12 @@ GrpcServer::GrpcServer(const Config&       cfg,
                         IKafkaProducer&     kafka)
     : cfg_(cfg)
     , job_repo_(pool)
+    , queue_repo_(pool)
     , worker_repo_(pool)
     , registry_()
     , job_svc_(job_repo_, kafka)
     , worker_svc_(job_repo_, worker_repo_, kafka, registry_)
-    , admin_svc_()
+    , admin_svc_(queue_repo_, worker_repo_, registry_, pool, cfg.redis)
     , scheduler_(pool, cfg.redis, kafka, registry_, cfg.scheduler)
 {}
 

@@ -189,11 +189,12 @@ set(COMMON_LIBS
 )
 
 # ---------------------------------------------------------------------------
-# jq_server_db — server-side job + worker repositories
+# jq_server_db — server-side job + worker + queue repositories
 # ---------------------------------------------------------------------------
 add_library(jq_server_db STATIC
     src/server/db/job_repository.cc
     src/server/db/worker_repository.cc
+    src/server/db/queue_repository.cc
 )
 target_include_directories(jq_server_db PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(jq_server_db PUBLIC jq_db jq_log PkgConfig::LIBPQXX)
@@ -226,6 +227,7 @@ target_link_libraries(jq_server_scheduler PUBLIC
 add_library(jq_server_grpc STATIC
     src/server/grpc/job_service_impl.cc
     src/server/grpc/worker_service_impl.cc
+    src/server/grpc/admin_service_impl.cc
     src/server/grpc/server.cc
 )
 target_include_directories(jq_server_grpc PUBLIC
@@ -263,18 +265,56 @@ target_link_libraries(jq-server PRIVATE
 )
 
 # ---------------------------------------------------------------------------
+# jq_worker_lib — Worker + JobExecutor (separate lib for testability)
+# ---------------------------------------------------------------------------
+add_library(jq_worker_lib STATIC
+    src/worker/worker.cc
+    src/worker/job_executor.cc
+)
+target_include_directories(jq_worker_lib PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${PROTO_OUT_DIR}
+)
+target_link_libraries(jq_worker_lib PUBLIC
+    ${COMMON_LIBS}
+)
+
+# ---------------------------------------------------------------------------
 # jq-worker
 # ---------------------------------------------------------------------------
 add_executable(jq-worker src/worker/main.cc)
 target_include_directories(jq-worker PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(jq-worker PRIVATE ${COMMON_LIBS})
+target_link_libraries(jq-worker PRIVATE jq_worker_lib ${COMMON_LIBS})
+
+# ---------------------------------------------------------------------------
+# jq_ctl_lib — GrpcClient + Formatter + all command handlers
+# ---------------------------------------------------------------------------
+add_library(jq_ctl_lib STATIC
+    src/ctl/client.cc
+    src/ctl/output/formatter.cc
+    src/ctl/commands/jobs.cc
+    src/ctl/commands/queues.cc
+    src/ctl/commands/workers.cc
+    src/ctl/commands/system.cc
+)
+target_include_directories(jq_ctl_lib PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${PROTO_OUT_DIR}
+)
+target_link_libraries(jq_ctl_lib PUBLIC
+    proto_gen
+    gRPC::grpc++
+    protobuf::libprotobuf
+    nlohmann_json::nlohmann_json
+    jq_config
+)
 
 # ---------------------------------------------------------------------------
 # jq-ctl
 # ---------------------------------------------------------------------------
 add_executable(jq-ctl src/ctl/main.cc)
 target_include_directories(jq-ctl PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(jq-ctl PRIVATE ${COMMON_LIBS})
+target_link_libraries(jq-ctl PRIVATE jq_ctl_lib ${COMMON_LIBS})
 
 # ---------------------------------------------------------------------------
 # Tests

@@ -1,53 +1,72 @@
 #pragma once
 
 #include <grpcpp/grpcpp.h>
+
 #include "admin_service.grpc.pb.h"
+#include "common/config/config.h"
+#include "common/db/connection_pool.h"
+#include "server/db/queue_repository.h"
+#include "server/db/worker_repository.h"
+#include "server/scheduler/worker_registry.h"
 
 namespace jq {
 
-// Stub implementation — AdminService RPCs are implemented in a later prompt.
+// ---------------------------------------------------------------------------
+// AdminServiceImpl — implements all eight AdminService RPCs.
+//
+// Dependencies injected for testability and correctness:
+//   IQueueRepository  — queue CRUD + stats
+//   IWorkerRepository — worker status changes
+//   WorkerRegistry    — in-memory drain/shutdown signalling
+//   ConnectionPool    — DB connectivity check for GetSystemStatus
+//   RedisConfig       — Redis connectivity check for GetSystemStatus
+// ---------------------------------------------------------------------------
 class AdminServiceImpl final : public AdminService::Service {
 public:
+    AdminServiceImpl(db::IQueueRepository&  queue_repo,
+                     db::IWorkerRepository& worker_repo,
+                     WorkerRegistry&        registry,
+                     db::ConnectionPool&    pool,
+                     const RedisConfig&     redis_cfg);
+
     grpc::Status CreateQueue(grpc::ServerContext*,
                              const CreateQueueRequest*,
-                             CreateQueueResponse*) override {
-        return grpc::Status(grpc::StatusCode::UNIMPLEMENTED, "not yet implemented");
-    }
+                             CreateQueueResponse*) override;
+
     grpc::Status DeleteQueue(grpc::ServerContext*,
                              const DeleteQueueRequest*,
-                             DeleteQueueResponse*) override {
-        return grpc::Status(grpc::StatusCode::UNIMPLEMENTED, "not yet implemented");
-    }
+                             DeleteQueueResponse*) override;
+
     grpc::Status ListQueues(grpc::ServerContext*,
                             const ListQueuesRequest*,
-                            ListQueuesResponse*) override {
-        return grpc::Status(grpc::StatusCode::UNIMPLEMENTED, "not yet implemented");
-    }
+                            ListQueuesResponse*) override;
+
     grpc::Status GetQueueStats(grpc::ServerContext*,
                                const GetQueueStatsRequest*,
-                               GetQueueStatsResponse*) override {
-        return grpc::Status(grpc::StatusCode::UNIMPLEMENTED, "not yet implemented");
-    }
+                               GetQueueStatsResponse*) override;
+
     grpc::Status ListWorkers(grpc::ServerContext*,
                              const ListWorkersRequest*,
-                             ListWorkersResponse*) override {
-        return grpc::Status(grpc::StatusCode::UNIMPLEMENTED, "not yet implemented");
-    }
+                             ListWorkersResponse*) override;
+
     grpc::Status DrainWorker(grpc::ServerContext*,
                              const DrainWorkerRequest*,
-                             DrainWorkerResponse*) override {
-        return grpc::Status(grpc::StatusCode::UNIMPLEMENTED, "not yet implemented");
-    }
+                             DrainWorkerResponse*) override;
+
     grpc::Status ShutdownWorker(grpc::ServerContext*,
                                 const ShutdownWorkerRequest*,
-                                ShutdownWorkerResponse*) override {
-        return grpc::Status(grpc::StatusCode::UNIMPLEMENTED, "not yet implemented");
-    }
+                                ShutdownWorkerResponse*) override;
+
     grpc::Status GetSystemStatus(grpc::ServerContext*,
                                  const GetSystemStatusRequest*,
-                                 GetSystemStatusResponse*) override {
-        return grpc::Status(grpc::StatusCode::UNIMPLEMENTED, "not yet implemented");
-    }
+                                 GetSystemStatusResponse*) override;
+
+private:
+    db::IQueueRepository&  queue_repo_;
+    db::IWorkerRepository& worker_repo_;
+    WorkerRegistry&        registry_;
+    db::ConnectionPool&    pool_;
+    const RedisConfig&     redis_cfg_;
 };
 
 }  // namespace jq

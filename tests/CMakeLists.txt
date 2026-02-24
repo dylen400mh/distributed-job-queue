@@ -106,3 +106,24 @@ target_link_libraries(scheduler_unit_tests PRIVATE
     GTest::gmock
 )
 add_test(NAME scheduler_unit_tests COMMAND scheduler_unit_tests)
+
+# ---------------------------------------------------------------------------
+# Integration tests — end-to-end submit→RUNNING→DONE lifecycle.
+# Requires JQ_TEST_SERVER_ADDR env var and a running jq-server + jq-worker.
+# Tests skip automatically if the env var is unset.
+# ---------------------------------------------------------------------------
+add_executable(integration_tests
+    integration/e2e_test.cc
+)
+target_include_directories(integration_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_BINARY_DIR}/proto_gen
+)
+target_link_libraries(integration_tests PRIVATE
+    jq_ctl_lib
+    proto_gen
+    gRPC::grpc++
+    protobuf::libprotobuf
+    GTest::gtest_main
+)
+add_test(NAME integration_tests COMMAND integration_tests)

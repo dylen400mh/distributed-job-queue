@@ -144,6 +144,28 @@ void WorkerRepository::SetWorkerStatus(const std::string& worker_id,
 }
 
 // ---------------------------------------------------------------------------
+// ListWorkers
+// ---------------------------------------------------------------------------
+
+std::vector<WorkerRow> WorkerRepository::ListWorkers() {
+    try {
+        auto c = Conn();
+        pqxx::work txn(c.get());
+        std::string sql = std::string(kWorkerSelect) +
+            "ORDER BY registered_at DESC";
+        auto r = txn.exec(sql);
+        txn.commit();
+        std::vector<WorkerRow> workers;
+        workers.reserve(r.size());
+        for (const auto& row : r) workers.push_back(RowToWorker(row));
+        return workers;
+    } catch (const std::exception& e) {
+        LOG_ERROR("ListWorkers failed", {{"error", e.what()}});
+        throw;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // FetchStaleWorkers
 // ---------------------------------------------------------------------------
 

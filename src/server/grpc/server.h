@@ -8,6 +8,7 @@
 #include "common/kafka/kafka_producer.h"
 #include "common/db/connection_pool.h"
 #include "server/db/job_repository.h"
+#include "server/db/queue_repository.h"
 #include "server/db/worker_repository.h"
 #include "server/grpc/job_service_impl.h"
 #include "server/grpc/worker_service_impl.h"
@@ -40,15 +41,16 @@ public:
     void Stop();
 
 private:
-    const Config&       cfg_;
-    db::JobRepository   job_repo_;
+    const Config&        cfg_;
+    db::JobRepository    job_repo_;
+    db::QueueRepository  queue_repo_;
     db::WorkerRepository worker_repo_;
 
-    WorkerRegistry      registry_;
+    WorkerRegistry       registry_;
 
-    JobServiceImpl      job_svc_;
-    WorkerServiceImpl   worker_svc_;
-    AdminServiceImpl    admin_svc_;
+    JobServiceImpl       job_svc_;
+    WorkerServiceImpl    worker_svc_;
+    AdminServiceImpl     admin_svc_;
 
     Scheduler           scheduler_;
 

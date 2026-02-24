@@ -51,6 +51,9 @@ public:
 
     // Fetch workers WHERE status = 'ONLINE' AND last_heartbeat < now() - timeout_s.
     virtual std::vector<WorkerRow> FetchStaleWorkers(int timeout_s) = 0;
+
+    // List all workers ordered by registered_at descending.
+    virtual std::vector<WorkerRow> ListWorkers() = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -72,6 +75,8 @@ public:
                           const std::string& status) override;
 
     std::vector<WorkerRow> FetchStaleWorkers(int timeout_s) override;
+
+    std::vector<WorkerRow> ListWorkers() override;
 };
 
 }  // namespace jq::db
