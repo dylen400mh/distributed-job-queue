@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jq-config
+  namespace: jq
+  labels:
+    app.kubernetes.io/part-of: distributed-job-queue
+data:
+  # Non-sensitive configuration. All sensitive values (passwords, endpoints) are
+  # injected via environment variables from the jq-secret Secret, which override
+  # these YAML values at runtime (JQ_* env vars always win).
+  config.yaml: |
+    grpc:
+      port: 50051
+      tls:
+        enabled: false
+
+    db:
+      port: 5432
+      name: jobqueue
+      pool_size: 10
+      connect_timeout_ms: 3000
+      # host and user are injected via JQ_DB_HOST / JQ_DB_USER from the Secret
+
+    redis:
+      db: 0
+      connect_timeout_ms: 1000
+      # addr is injected via JQ_REDIS_ADDR from the Secret
+
+    kafka:
+      producer:
+        acks: "all"
+        compression: "snappy"
+      consumer:
+        group_id: "jq-server"
+        auto_offset_reset: "earliest"
+      # brokers is injected via JQ_KAFKA_BROKERS from the Secret
+
+    scheduler:
+      interval_ms: 500
+      batch_size: 100
+      assignment_timeout_s: 60
+      worker_heartbeat_timeout_s: 30
+
+    metrics:
+      port: 9090
+
+    health:
+      port: 8080
+
+    logging:
+      level: "info"
+      format: "json"

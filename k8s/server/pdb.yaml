@@ -1,0 +1,15 @@
+# Ensures at least 1 jq-server pod stays available during voluntary disruptions
+# (node drains, rolling updates, cluster upgrades).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jq-server
+  namespace: jq
+  labels:
+    app: jq-server
+    app.kubernetes.io/part-of: distributed-job-queue
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: jq-server

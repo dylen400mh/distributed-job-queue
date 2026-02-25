@@ -1,0 +1,31 @@
+# ClusterIP Service — exposes jq-server inside the cluster.
+# Workers and jq-ctl reach the gRPC endpoint at:
+#   jq-server.jq.svc.cluster.local:50051
+#
+# To expose externally (e.g., for jq-ctl from a bastion or CI), add a
+# LoadBalancer or use an AWS NLB Ingress with gRPC support.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jq-server
+  namespace: jq
+  labels:
+    app: jq-server
+    app.kubernetes.io/part-of: distributed-job-queue
+spec:
+  type: ClusterIP
+  selector:
+    app: jq-server
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP
+    - name: health
+      port: 8080
+      targetPort: health
+      protocol: TCP

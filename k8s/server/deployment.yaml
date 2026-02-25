@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jq-server
+  namespace: jq
+  labels:
+    app: jq-server
+    app.kubernetes.io/part-of: distributed-job-queue
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: jq-server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Zero-downtime: bring up new pod before taking down old one.
+      # New pod runs DB migrations (idempotent) before passing readyz.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: jq-server
+        app.kubernetes.io/part-of: distributed-job-queue
+      annotations:
+        # Force pod restart when ConfigMap content changes
+        checksum/config: "{{ include (print .Template.BasePath \"/configmap.yaml\") . | sha256sum }}"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Allow 30s for in-flight gRPC handlers + Kafka flush before SIGKILL
+      terminationGracePeriodSeconds: 60
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+      containers:
+        - name: jq-server
+          # Replace with your ECR image URI, e.g.:
+          # <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/jq-server:<TAG>
+          image: jq-server:latest
+          imagePullPolicy: IfNotPresent
+
+          args:
+            - "--config"
+            - "/etc/jq/config.yaml"
+            - "--log-level"
+            - "info"
+
+          ports:
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+            - name: health
+              containerPort: 8080
+              protocol: TCP
+
+          # All sensitive values and environment-specific endpoints come from the Secret.
+          # JQ_* env vars override the corresponding config.yaml fields at runtime.
+          envFrom:
+            - secretRef:
+                name: jq-secret
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/jq
+              readOnly: true
+
+          # Readiness: checks DB SELECT 1 + Redis ping before accepting traffic.
+          # New pods must pass this before old pods are removed during rolling updates.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+            successThreshold: 1
+
+          # Liveness: restarts the pod if the health server stops responding.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 4
+
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: config
+          configMap:
+            name: jq-config
+
+      # Spread replicas across availability zones for HA
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: jq-server

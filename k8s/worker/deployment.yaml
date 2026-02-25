@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jq-worker
+  namespace: jq
+  labels:
+    app: jq-worker
+    app.kubernetes.io/part-of: distributed-job-queue
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: jq-worker
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Drain one worker at a time — avoids double-processing jobs mid-flight.
+      # Workers call Deregister on SIGTERM so the scheduler stops sending new work.
+      maxUnavailable: 1
+      maxSurge: 0
+  template:
+    metadata:
+      labels:
+        app: jq-worker
+        app.kubernetes.io/part-of: distributed-job-queue
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+        prometheus.io/path: "/metrics"
+    spec:
+      # 60s for active jobs to finish + 30s buffer before SIGKILL.
+      # Jobs still running at SIGKILL deadline are reclaimed by heartbeat timeout.
+      terminationGracePeriodSeconds: 90
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+      containers:
+        - name: jq-worker
+          # Replace with your ECR image URI, e.g.:
+          # <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/jq-worker:<TAG>
+          image: jq-worker:latest
+          imagePullPolicy: IfNotPresent
+
+          args:
+            - "--config"
+            - "/etc/jq/config.yaml"
+            - "--server-addr"
+            - "jq-server.jq.svc.cluster.local:50051"
+            - "--concurrency"
+            - "4"
+            - "--queues"
+            - "default"
+            - "--log-level"
+            - "info"
+            - "--metrics-port"
+            - "9091"
+            - "--health-port"
+            - "8081"
+
+          ports:
+            - name: metrics
+              containerPort: 9091
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+
+          # Workers only need the Secret for any config overrides (e.g., if they
+          # share the config file with the server and need the same db/redis/kafka
+          # values). In practice, workers use the config file for these.
+          envFrom:
+            - secretRef:
+                name: jq-secret
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/jq
+              readOnly: true
+
+          # Worker health is simple: process is alive and connected to server.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 4
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: config
+          configMap:
+            name: jq-config
+
+      # Spread workers across AZs for resilience and even job distribution
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: jq-worker

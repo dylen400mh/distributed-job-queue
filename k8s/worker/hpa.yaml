@@ -1,0 +1,40 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: jq-worker
+  namespace: jq
+  labels:
+    app: jq-worker
+    app.kubernetes.io/part-of: distributed-job-queue
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: jq-worker
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # To scale on queue depth instead (requires KEDA — https://keda.sh):
+    # Remove the CPU metric above and add a ScaledObject pointing at the
+    # jq_job_queue_depth{status="PENDING"} Prometheus metric.
+  behavior:
+    scaleDown:
+      # Conservative scale-down: workers have in-flight jobs; don't yank them too fast.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      # Aggressive scale-up: respond quickly to sudden job bursts.
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 3
+          periodSeconds: 60

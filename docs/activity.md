@@ -227,3 +227,22 @@
 2. Fixed `src/server/grpc/worker_service_impl.cc` `ReportResult`: if `job->status == "ASSIGNED"`, auto-transition to `RUNNING` (sets `started_at = now()` and `worker_id`) before calling `StoreJobResult`
 3. Fixed `src/server/db/job_repository.cc` `TransitionJobStatus`: when `worker_id` is non-empty, append `worker_id = <uuid>` to the UPDATE SET clause so the column is populated on the ASSIGNED→RUNNING transition
 4. Rebuilt jq-server; verified job reaches `DONE` with `worker_id`, `started_at`, and `completed_at` all correctly populated
+
+---
+
+### Prompt
+> Analyze the codebase and determine a plan for the next step. Start with the k8s manifests.
+
+### Actions
+1. Read `docs/activity.md`, `tasks/todo.md`, `prompts.md`, `requirements.md`, `docker-compose.yml`, `config.local.yaml`, `docker/Dockerfile.server`, `docker/Dockerfile.worker`, `src/server/main.cc`, `src/worker/main.cc` to assess project state and gather all information needed for K8s manifests
+2. Identified remaining gaps: `k8s/` entirely empty, no Grafana dashboard, no Prometheus alert rules, `docker-compose.yml` does not include jq-server/jq-worker containers
+3. Agreed approach: plain YAML manifests targeting AWS managed services (RDS, ElastiCache, MSK) — no StatefulSets for backing services
+4. Created `k8s/namespace.yaml` — Namespace `jq`
+5. Created `k8s/configmap.yaml` — full `config.yaml` with non-sensitive values; secrets injected via env vars
+6. Created `k8s/secret.yaml` — Secret template with placeholders for RDS, ElastiCache, MSK endpoints and passwords; includes instructions for AWS Secrets Manager / Sealed Secrets
+7. Created `k8s/server/deployment.yaml` — 2 replicas, `maxUnavailable: 0 / maxSurge: 1` rolling update, `/readyz` readiness probe (checks DB+Redis), 60s termination grace, non-root security context, AZ topology spread
+8. Created `k8s/server/service.yaml` — ClusterIP exposing gRPC (50051), metrics (9090), health (8080)
+9. Created `k8s/server/hpa.yaml` — scales 2–5 replicas on CPU 70% / memory 80%; slow scale-down (120s window, 1 pod/60s)
+10. Created `k8s/server/pdb.yaml` — `minAvailable: 1` to protect HA during node drains
+11. Created `k8s/worker/deployment.yaml` — 2 replicas, `maxUnavailable: 1 / maxSurge: 0` (drain one at a time), 90s termination grace, `--server-addr jq-server.jq.svc.cluster.local:50051`
+12. Created `k8s/worker/hpa.yaml` — scales 2–10 replicas on CPU 70%; aggressive scale-up (3 pods/60s), conservative scale-down (300s window); includes comment for KEDA queue-depth scaling
