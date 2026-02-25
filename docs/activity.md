@@ -214,3 +214,16 @@
 2. Fixed `jq-worker` `RegisterWorker` RPC failure ("Unexpected error in RPC handling") — worker sent hostname+PID string (e.g. `MacBook-Pro.local-13380`) as `worker_id`, which server passed to PostgreSQL as `::uuid` and threw an unhandled exception. Fix: added `registration_id_` field (user-supplied UUID or empty) separate from `worker_id_` (display name); `Run()` sends `registration_id_` so an empty value lets the server generate a valid UUID
 3. Fixed `jq-ctl` flag parsing failure (unrecognized option `--queue`, `--payload`) — macOS `getopt_long` permutes argv by default, moving sub-command flags (`--queue`, `--payload`) before the subcommand words (`job`, `submit`) and then rejecting them as unrecognized. Fix: added `'+'` prefix to `ParseCtlFlags` option string in `src/common/config/flags.h` (POSIX stop-at-first-non-option mode); also removed four incorrect `#ifdef __APPLE__ optreset = 1 #endif` blocks from `src/ctl/commands/jobs.cc` and `src/ctl/commands/queues.cc` that were added during an earlier (incorrect) diagnosis
 4. Committed and pushed all fixes in two commits: `5f215a3` (worker UUID fix) and `c5116a4` (getopt fix)
+
+---
+
+### Prompt
+> Job stuck in ASSIGNED state — fix so jobs complete end-to-end.
+
+### Actions
+1. Diagnosed two bugs causing jobs to permanently stick in `ASSIGNED`:
+   - **Missing ASSIGNED→RUNNING transition**: `ReportResult` rejected the worker's result with `FAILED_PRECONDITION` because it checked `status != "RUNNING"` — but no code ever advanced the job to `RUNNING`; the worker goes directly from receiving the assignment to reporting the final result
+   - **`worker_id` not written to the `jobs` table**: `TransitionJobStatus` only updated the `status` column, leaving `worker_id` NULL even after assignment
+2. Fixed `src/server/grpc/worker_service_impl.cc` `ReportResult`: if `job->status == "ASSIGNED"`, auto-transition to `RUNNING` (sets `started_at = now()` and `worker_id`) before calling `StoreJobResult`
+3. Fixed `src/server/db/job_repository.cc` `TransitionJobStatus`: when `worker_id` is non-empty, append `worker_id = <uuid>` to the UPDATE SET clause so the column is populated on the ASSIGNED→RUNNING transition
+4. Rebuilt jq-server; verified job reaches `DONE` with `worker_id`, `started_at`, and `completed_at` all correctly populated

@@ -151,7 +151,18 @@ grpc::Status WorkerServiceImpl::ReportResult(grpc::ServerContext*       /*ctx*/,
         return grpc::Status(grpc::StatusCode::NOT_FOUND,
                             "job '" + req->job_id() + "' not found");
     }
-    if (job->status != "RUNNING") {
+    // If job is still ASSIGNED (worker received it but hasn't transitioned yet),
+    // auto-advance to RUNNING now so StoreJobResult can accept the final status.
+    if (job->status == "ASSIGNED") {
+        try {
+            job_repo_.TransitionJobStatus(
+                req->job_id(), "ASSIGNED", "RUNNING", "STARTED", req->worker_id());
+        } catch (const std::exception& e) {
+            LOG_ERROR("ReportResult: ASSIGNED→RUNNING failed",
+                      {{"job_id", req->job_id()}, {"error", e.what()}});
+            return grpc::Status(grpc::StatusCode::INTERNAL, "database error");
+        }
+    } else if (job->status != "RUNNING") {
         return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
                             "job is not RUNNING (status=" + job->status + ")");
     }

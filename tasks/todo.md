@@ -1,32 +1,30 @@
-# Docker & Local Dev Infrastructure
+# Fix: Job Stuck in ASSIGNED State
 
-## Notes
+## Root Cause
 
-- Docker Compose needs: PostgreSQL 15, Redis 7, Kafka, Prometheus, Grafana
-- Use Redpanda for Kafka (single container, no Zookeeper, Kafka-compatible API)
-- `config.local.yaml` points at localhost ports exposed by Docker Compose
-- Dockerfiles use multi-stage builds: builder (Debian + full toolchain) → runtime (slim)
-- Makefile `test-integration` target: build integration_tests, set JQ_TEST_SERVER_ADDR, run
-- Prometheus scrapes jq-server on port 9090 and jq-worker on port 9091
-- Grafana provisioned automatically from `grafana/provisioning/` at startup
+Two bugs prevent jobs from completing:
+
+1. **Missing ASSIGNED→RUNNING transition** (`worker_service_impl.cc`): `ReportResult` checks
+   `job->status != "RUNNING"` and rejects with FAILED_PRECONDITION — but the job is still
+   `ASSIGNED` because nothing ever calls `TransitionJobStatus("ASSIGNED", "RUNNING", ...)`.
+   The worker goes straight from receiving the assignment to reporting the result, skipping
+   the RUNNING state entirely. Fix: auto-transition ASSIGNED→RUNNING at the start of
+   `ReportResult` when the job is in ASSIGNED state.
+
+2. **`worker_id` not written on ASSIGNED** (`job_repository.cc`): `TransitionJobStatus`
+   only updates `status`, not `worker_id` on the `jobs` row. Fix: when `worker_id` is
+   non-empty, add it to the UPDATE SET clause so the column is populated on the
+   ASSIGNED→RUNNING transition.
 
 ## Todo
 
-- [x] 1. Create `docker-compose.yml` — PostgreSQL 15, Redis 7, Redpanda (Kafka), Prometheus, Grafana
-- [x] 2. Create `config.local.yaml` — full config pointing at localhost Docker Compose ports
-- [x] 3. Create `Makefile` — `test-integration` and `test-e2e` targets
-- [x] 4. Create `docker/Dockerfile.server` — multi-stage Linux build for jq-server
-- [x] 5. Create `docker/Dockerfile.worker` — multi-stage Linux build for jq-worker
-- [x] 6. Create `prometheus/prometheus.yml` — scrape configs for jq-server + jq-worker
-- [x] 7. Create `grafana/provisioning/datasources/prometheus.yml` — auto-provision Prometheus datasource
-- [x] 8. Verify: `docker compose config --quiet` passes; `config.local.yaml` parses correctly
-- [x] 9. Append to docs/activity.md and push to git
+- [x] 1. `worker_service_impl.cc`: auto-transition ASSIGNED→RUNNING in `ReportResult`
+- [x] 2. `job_repository.cc`: update `worker_id` column in `TransitionJobStatus` when non-empty
+- [x] 3. Rebuild jq-server and verify job reaches DONE
+- [x] 4. Commit, push, and update activity.md
 
 ## Review
 
-- `docker-compose.yml` — five services with healthchecks; Redpanda used instead of Kafka+Zookeeper; Prometheus on host:9095 to avoid conflict with jq-server metrics on 9090
-- `config.local.yaml` — Kafka broker set to localhost:19092 (Redpanda external listener); plaintext password is local-dev only; TLS disabled
-- `Makefile` — `test-e2e` starts services and binaries as background processes, captures exit code, cleans up on completion
-- Dockerfiles — Ubuntu 22.04 two-stage builds; prometheus-cpp built from source (not in apt); jq-worker runs as non-root `jq` user
-- `prometheus/prometheus.yml` — uses `host.docker.internal` to reach host-side binaries from inside the Prometheus container
-- `grafana/provisioning/` — datasource auto-provisioned; Grafana starts with Prometheus already connected
+- `worker_service_impl.cc`: `ReportResult` now handles ASSIGNED→RUNNING→DONE/FAILED in one call; no proto changes needed
+- `job_repository.cc`: `worker_id` column on `jobs` table is populated on the ASSIGNED→RUNNING transition, enabling heartbeat recovery and correct display in `jq-ctl job status`
+- Verified end-to-end: job submitted via `jq-ctl` reaches `DONE` with `worker_id`, `started_at`, and `completed_at` all correctly set

@@ -185,9 +185,15 @@ bool JobRepository::TransitionJobStatus(const std::string& job_id,
             ts_col = ", completed_at = now()";
         }
 
+        // Propagate worker_id to the jobs row when provided.
+        std::string wid_col;
+        if (!worker_id.empty()) {
+            wid_col = ", worker_id = " + txn.quote(worker_id) + "::uuid";
+        }
+
         auto r = txn.exec(
             "UPDATE jobs SET status = '" + new_status + "'::job_status" +
-            ts_col + ", updated_at = now() "
+            ts_col + wid_col + ", updated_at = now() "
             "WHERE job_id = " + txn.quote(job_id) + "::uuid "
             "  AND status = '" + expected_from_status + "'::job_status "
             "RETURNING job_id");
