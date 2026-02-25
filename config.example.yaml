@@ -1,0 +1,60 @@
+# config.example.yaml — reference configuration for local development.
+#
+# Copy this file to config.local.yaml and fill in values for your environment.
+# config.local.yaml is gitignored; never commit real credentials.
+#
+# All values can be overridden by JQ_<UPPER_KEY> environment variables.
+# Secrets (db.password, redis.password, kafka.sasl.*) should always come
+# from env vars, never from a committed config file.
+#
+# Usage (local dev, with Docker Compose backing services):
+#   docker compose up -d
+#   cp config.example.yaml config.local.yaml   # then fill in password
+#   ./build/jq-server --config config.local.yaml
+#   ./build/jq-worker --config config.local.yaml --server-addr localhost:50051
+
+grpc:
+  port: 50051
+  tls:
+    enabled: false
+
+db:
+  host: localhost
+  port: 5432
+  name: jobqueue
+  user: jq
+  password: ""             # Set via JQ_DB_PASSWORD or fill in for local dev
+  pool_size: 5
+  connect_timeout_ms: 3000
+
+redis:
+  addr: localhost:6379
+  password: ""             # Set via JQ_REDIS_PASSWORD if Redis auth is enabled
+  db: 0
+  connect_timeout_ms: 1000
+
+kafka:
+  brokers:
+    - localhost:19092      # Redpanda external listener (Docker Compose default)
+  producer:
+    acks: all
+    compression: snappy
+  consumer:
+    group_id: jq-server
+    auto_offset_reset: earliest
+
+scheduler:
+  interval_ms: 500
+  batch_size: 100
+  assignment_timeout_s: 60
+  worker_heartbeat_timeout_s: 30
+
+metrics:
+  port: 9090
+
+health:
+  port: 8080
+
+logging:
+  level: debug
+  format: json

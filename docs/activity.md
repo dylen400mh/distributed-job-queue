@@ -188,3 +188,18 @@
 15. Created `tests/integration/e2e_test.cc` — 3 integration tests (skip automatically if `JQ_TEST_SERVER_ADDR` unset): `SubmitAndPollUntilDone`, `SubmitToNonExistentQueue_ReturnsNotFound`, `GetSystemStatus_ReturnsHealthy`
 16. Updated `tests/CMakeLists.txt` — added `integration_tests` executable
 17. Verified: full clean build, zero errors; 44/44 non-DB unit tests pass; integration tests skip gracefully without server
+
+---
+
+### Prompt
+> Docker & local dev infrastructure — create Docker Compose, config.local.yaml, Makefile, Dockerfiles, and monitoring config.
+
+### Actions
+1. Created `docker-compose.yml` — five services: PostgreSQL 15 (alpine), Redis 7 (alpine), Redpanda (Kafka-compatible, single container, no Zookeeper), Prometheus (UI on host:9095), Grafana (UI on host:3000); named volumes for Postgres and Grafana data; healthchecks on all backing services
+2. Created `config.local.yaml` — full config pointing at Docker Compose localhost ports: gRPC 50051, DB localhost:5432 (user=jq, db=jobqueue), Redis localhost:6379, Kafka broker localhost:19092 (Redpanda external listener); debug log level; TLS disabled
+3. Created `Makefile` — five targets: `build` (cmake --build), `test-unit` (runs all five non-DB unit test binaries), `test-integration` (sets JQ_TEST_SERVER_ADDR and runs integration_tests), `test-e2e` (starts backing services, launches jq-server + jq-worker as background processes, runs integration tests, kills processes on completion), `services` / `services-down` (docker compose helpers)
+4. Created `docker/Dockerfile.server` — two-stage Linux build: builder (Ubuntu 22.04 + full apt toolchain + prometheus-cpp from source) compiles jq-server; runtime ships binary + db/migrations; exposes 50051/9090/8080
+5. Created `docker/Dockerfile.worker` — same builder pattern; runtime adds coreutils+bash for fork/exec payloads; runs as non-root `jq` user; exposes 9091/8081
+6. Created `prometheus/prometheus.yml` — scrape_configs for jq-server (host.docker.internal:9090) and jq-worker (host.docker.internal:9091); 15s scrape interval
+7. Created `grafana/provisioning/datasources/prometheus.yml` — auto-provisions Prometheus datasource so Grafana starts ready
+8. Verified: `docker compose config --quiet` passes; `./build/jq-server --config config.local.yaml --dry-run` parses and validates config correctly

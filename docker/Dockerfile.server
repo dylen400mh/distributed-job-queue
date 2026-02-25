@@ -1,0 +1,94 @@
+# docker/Dockerfile.server
+# Multi-stage build for jq-server (Linux x86_64).
+#
+# Stage 1 (builder): Full Ubuntu build toolchain; compiles jq-server.
+# Stage 2 (runtime): Minimal Ubuntu image with only runtime shared libs.
+#
+# Usage:
+#   docker build -f docker/Dockerfile.server -t jq-server:latest .
+#   docker run --rm jq-server:latest --help
+
+# ---------------------------------------------------------------------------
+# Stage 1: builder
+# ---------------------------------------------------------------------------
+FROM ubuntu:22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
+    git \
+    ca-certificates \
+    # gRPC + protobuf
+    libgrpc++-dev \
+    libprotobuf-dev \
+    protobuf-compiler \
+    protobuf-compiler-grpc \
+    # PostgreSQL client
+    libpqxx-dev \
+    # Redis client
+    libhiredis-dev \
+    # Kafka client
+    librdkafka-dev \
+    # Utilities
+    libboost-filesystem-dev \
+    libboost-headers-dev \
+    libabsl-dev \
+    libspdlog-dev \
+    nlohmann-json3-dev \
+    libyaml-cpp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build prometheus-cpp from source (not packaged in Ubuntu 22.04 apt)
+RUN git clone --depth 1 --branch v1.2.4 \
+    https://github.com/jupp0r/prometheus-cpp.git /tmp/prometheus-cpp \
+    && cmake -S /tmp/prometheus-cpp -B /tmp/prometheus-cpp/build \
+       -DCMAKE_BUILD_TYPE=Release \
+       -DBUILD_SHARED_LIBS=OFF \
+       -DENABLE_TESTING=OFF \
+       -DENABLE_PULL=ON \
+    && cmake --build /tmp/prometheus-cpp/build --parallel \
+    && cmake --install /tmp/prometheus-cpp/build \
+    && rm -rf /tmp/prometheus-cpp
+
+WORKDIR /src
+COPY . .
+
+RUN cmake -B build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_EXPORT_COMPILE_COMMANDS=OFF \
+    && cmake --build build --parallel --target jq-server
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime
+# ---------------------------------------------------------------------------
+FROM ubuntu:22.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libgrpc++1.51 \
+    libprotobuf23 \
+    libpqxx-6.4 \
+    libhiredis0.14 \
+    librdkafka++1 \
+    libabsl2021.11.02 \
+    libspdlog1 \
+    libyaml-cpp0.7 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /src/build/jq-server /usr/local/bin/jq-server
+COPY --from=builder /src/db/migrations   /etc/jq/migrations
+
+# prometheus-cpp is statically linked; no extra runtime package needed
+
+EXPOSE 50051   # gRPC
+EXPOSE 9090    # Prometheus metrics
+EXPOSE 8080    # Health endpoints
+
+ENTRYPOINT ["jq-server"]
+CMD ["--help"]

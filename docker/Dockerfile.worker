@@ -1,0 +1,101 @@
+# docker/Dockerfile.worker
+# Multi-stage build for jq-worker (Linux x86_64).
+#
+# Stage 1 (builder): Full Ubuntu build toolchain; compiles jq-worker.
+# Stage 2 (runtime): Minimal Ubuntu image with only runtime shared libs.
+#
+# Usage:
+#   docker build -f docker/Dockerfile.worker -t jq-worker:latest .
+#   docker run --rm jq-worker:latest --help
+
+# ---------------------------------------------------------------------------
+# Stage 1: builder
+# ---------------------------------------------------------------------------
+FROM ubuntu:22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
+    git \
+    ca-certificates \
+    # gRPC + protobuf
+    libgrpc++-dev \
+    libprotobuf-dev \
+    protobuf-compiler \
+    protobuf-compiler-grpc \
+    # PostgreSQL client (needed by common lib)
+    libpqxx-dev \
+    # Redis client (needed by common lib)
+    libhiredis-dev \
+    # Kafka client (needed by common lib)
+    librdkafka-dev \
+    # Utilities
+    libboost-filesystem-dev \
+    libboost-headers-dev \
+    libabsl-dev \
+    libspdlog-dev \
+    nlohmann-json3-dev \
+    libyaml-cpp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build prometheus-cpp from source (not packaged in Ubuntu 22.04 apt)
+RUN git clone --depth 1 --branch v1.2.4 \
+    https://github.com/jupp0r/prometheus-cpp.git /tmp/prometheus-cpp \
+    && cmake -S /tmp/prometheus-cpp -B /tmp/prometheus-cpp/build \
+       -DCMAKE_BUILD_TYPE=Release \
+       -DBUILD_SHARED_LIBS=OFF \
+       -DENABLE_TESTING=OFF \
+       -DENABLE_PULL=ON \
+    && cmake --build /tmp/prometheus-cpp/build --parallel \
+    && cmake --install /tmp/prometheus-cpp/build \
+    && rm -rf /tmp/prometheus-cpp
+
+WORKDIR /src
+COPY . .
+
+RUN cmake -B build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_EXPORT_COMPILE_COMMANDS=OFF \
+    && cmake --build build --parallel --target jq-worker
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime
+# ---------------------------------------------------------------------------
+FROM ubuntu:22.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libgrpc++1.51 \
+    libprotobuf23 \
+    libpqxx-6.4 \
+    libhiredis0.14 \
+    librdkafka++1 \
+    libabsl2021.11.02 \
+    libspdlog1 \
+    libyaml-cpp0.7 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /src/build/jq-worker /usr/local/bin/jq-worker
+
+# jq-worker executes job payloads via fork/exec.
+# Install common utilities that job payloads are likely to need.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    coreutils \
+    bash \
+    && rm -rf /var/lib/apt/lists/*
+
+EXPOSE 9091    # Prometheus metrics
+EXPOSE 8081    # Health endpoints
+
+# Run as non-root for security
+RUN useradd --system --no-create-home jq
+USER jq
+
+ENTRYPOINT ["jq-worker"]
+CMD ["--help"]
