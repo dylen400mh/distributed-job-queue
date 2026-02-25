@@ -155,3 +155,36 @@
 10. Created `tests/unit/server/scheduler_test.cc` — 12 tests: 5 `BackoffTest` (formula verification) + 7 `WorkerRegistryTest` (no workers, wrong queue, matching worker, concurrency limit, decrement allows next, remove prevents assign, write failure count rollback)
 11. Fixed toolchain: added `CMAKE_EXE_LINKER_FLAGS` in `cmake/toolchain-macos.cmake` pointing to `/opt/homebrew/opt/llvm/lib/c++` so `std::__1::__hash_memory` (Homebrew LLVM 21 libc++ ABI symbol required by `std::unordered_map<std::string, ...>`) resolves at link time
 12. Verified: full clean build, zero errors; 12/12 scheduler + 15/15 server + 5/5 redis + 4/4 kafka + 8/8 config = 44/44 unit tests pass (db_unit_tests skipped — requires running PostgreSQL)
+
+---
+
+### Prompt
+> [Prompt 8 — jq-worker Binary & jq-ctl Operator CLI]
+> Implement the jq-worker binary and the jq-ctl operator CLI.
+
+### Actions
+1. Created `src/worker/worker.h/.cc` — `ThreadPool` (fixed-size thread pool with task queue and active count) + `Worker` class:
+   - `Run()`: calls `RegisterWorker` (server may assign a UUID back), starts heartbeat thread, opens `StreamJobs` server-streaming RPC; waits on concurrency gate before dispatching each `JobAssignment` to thread pool
+   - `HeartbeatLoop()`: sends `Heartbeat` every `heartbeat_interval_s`; reconnects stub after 3 consecutive failures
+   - `ExecuteAndReport()`: calls `JobExecutor::Execute`, calls `ReportResult`; runs on thread pool
+   - `Shutdown()`: sets `shutdown_` flag, cancels `stream_ctx_` via `TryCancel()`, notifies concurrency CV; waits up to `grace_period_s` for active jobs, then calls `Deregister`
+2. Created `src/worker/job_executor.h/.cc` — `JobExecutor::Execute(job_id, payload_json, ttl_seconds)`:
+   - Parses `"command"` array from payload JSON via nlohmann-json
+   - `fork()`/`exec()` with `pipe()` for combined stdout+stderr capture (truncated at 1 MiB)
+   - Per-job `ttl_seconds` timeout enforced with `SIGKILL`
+   - Returns `ExecutionResult{success, output, error_message}`
+3. Replaced `src/worker/main.cc` — flags → config → logger → metrics → health server → signal handlers → `Worker::Run()` (blocking) → `Worker::Shutdown()` on SIGTERM/SIGINT
+4. Created `src/ctl/client.h/.cc` — `GrpcClient`: wraps `JobService`, `WorkerService`, `AdminService` stubs on a single channel; configurable `--timeout` deadline per call; TLS credentials support
+5. Created `src/ctl/commands/commands.h` — declarations of all 13 command handler functions
+6. Created `src/ctl/commands/jobs.cc` — 6 job subcommands: `submit` (--queue, --payload, --priority, --max-retries), `status`, `cancel`, `list` (--queue, --status, --limit), `logs`, `retry`
+7. Created `src/ctl/commands/queues.cc` — 4 queue subcommands: `list`, `create` (--max-retries, --ttl), `delete` (--force), `stats`
+8. Created `src/ctl/commands/workers.cc` — 3 worker subcommands: `list`, `drain`, `shutdown`
+9. Created `src/ctl/commands/system.cc` — `system status` (calls `GetSystemStatus`, prints component health) and `version`
+10. Created `src/ctl/output/formatter.h/.cc` — `Format(data, OutputFormat)`: TABLE (column-width pass + aligned output), JSON (pretty-printed via nlohmann-json), YAML (via yaml-cpp)
+11. Replaced `src/ctl/main.cc` — dispatches `job|queue|worker|system|version` groups to handlers; `--help` at any level; exits non-zero on error
+12. Created `src/server/grpc/admin_service_impl.cc` — all 8 AdminService RPCs: `CreateQueue`, `DeleteQueue`, `ListQueues`, `GetQueueStats`, `ListWorkers`, `DrainWorker`, `ShutdownWorker`, `GetSystemStatus` (SELECT 1 + hiredis ping for readiness)
+13. Created `src/server/db/queue_repository.h/.cc` — `QueueRow`, `QueueStatsRow`, `IQueueRepository`, `QueueRepository`: `InsertQueue`, `DeleteQueue` (rejects non-empty unless force), `ListQueues`, `GetQueueStats` (aggregate counts + avg duration + error rate)
+14. Updated `CMakeLists.txt` — added `jq_worker_lib` (worker.cc + job_executor.cc) and `jq_ctl_lib` (client.cc + commands + formatter); extended `jq_server_db` with queue_repository.cc
+15. Created `tests/integration/e2e_test.cc` — 3 integration tests (skip automatically if `JQ_TEST_SERVER_ADDR` unset): `SubmitAndPollUntilDone`, `SubmitToNonExistentQueue_ReturnsNotFound`, `GetSystemStatus_ReturnsHealthy`
+16. Updated `tests/CMakeLists.txt` — added `integration_tests` executable
+17. Verified: full clean build, zero errors; 44/44 non-DB unit tests pass; integration tests skip gracefully without server
