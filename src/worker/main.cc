@@ -113,14 +113,6 @@ int main(int argc, char** argv) {
     jq::log::InitLogger("jq-worker", flags.log_level);
     for (const auto& w : cfg.sensitive_field_warnings) LOG_WARN(w);
 
-    // ---- Worker ID (hostname+PID if not specified) ----
-    std::string worker_id = flags.worker_id;
-    if (worker_id.empty()) {
-        char hostname[256] = {};
-        ::gethostname(hostname, sizeof(hostname));
-        worker_id = std::string(hostname) + "-" + std::to_string(::getpid());
-    }
-
     // ---- Concurrency ----
     int concurrency = (flags.concurrency > 0) ? flags.concurrency : 4;
 
@@ -128,9 +120,10 @@ int main(int argc, char** argv) {
     std::vector<std::string> queues = flags.queues;
     if (queues.empty()) queues.push_back("default");
 
+    // flags.worker_id may be empty; Worker constructor computes hostname+PID fallback.
     LOG_INFO("jq-worker starting",
              {{"server_addr", flags.server_addr},
-              {"worker_id",   worker_id},
+              {"worker_id",   flags.worker_id.empty() ? "(auto)" : flags.worker_id},
               {"concurrency", concurrency}});
 
     // ---- Metrics server ----
@@ -145,7 +138,7 @@ int main(int argc, char** argv) {
     std::signal(SIGINT,  SignalHandler);
 
     // ---- Worker (blocks until Shutdown()) ----
-    jq::Worker worker(flags.server_addr, worker_id, concurrency, queues);
+    jq::Worker worker(flags.server_addr, flags.worker_id, concurrency, queues);
     g_worker = &worker;
     worker.Run();
     g_worker = nullptr;

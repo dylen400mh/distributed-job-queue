@@ -69,13 +69,22 @@ Worker::Worker(const std::string&              server_addr,
                int                             heartbeat_interval_s,
                int                             grace_period_s)
     : server_addr_(server_addr)
-    , worker_id_(worker_id)
+    , registration_id_(worker_id)  // may be empty; server generates UUID if so
     , concurrency_(concurrency)
     , queues_(queues)
     , heartbeat_interval_s_(heartbeat_interval_s)
     , grace_period_s_(grace_period_s)
     , pool_(concurrency)
-{}
+{
+    // Display ID: use user-provided value if set, else hostname+PID for logging.
+    if (!worker_id.empty()) {
+        worker_id_ = worker_id;
+    } else {
+        char hostname[256] = {};
+        ::gethostname(hostname, sizeof(hostname));
+        worker_id_ = std::string(hostname) + "-" + std::to_string(::getpid());
+    }
+}
 
 void Worker::Connect() {
     channel_ = grpc::CreateChannel(server_addr_, grpc::InsecureChannelCredentials());
@@ -107,7 +116,7 @@ void Worker::Run() {
     // Register with jq-server.
     {
         RegisterWorkerRequest req;
-        req.set_worker_id(worker_id_);
+        req.set_worker_id(registration_id_);  // empty = let server assign a UUID
         req.set_concurrency(concurrency_);
         for (const auto& q : queues_) req.add_queues(q);
 

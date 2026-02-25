@@ -79,7 +79,8 @@ private:
     void Connect();
 
     std::string              server_addr_;
-    std::string              worker_id_;   // effective ID (may be set by server on Register)
+    std::string              worker_id_;        // effective ID (updated to server-assigned UUID on Register)
+    std::string              registration_id_;  // user-provided UUID from --worker-id, or empty
     int                      concurrency_;
     std::vector<std::string> queues_;
     int                      heartbeat_interval_s_;

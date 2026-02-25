@@ -204,7 +204,7 @@ inline CtlFlags ParseCtlFlags(int argc, char** argv) {
     };
     // clang-format on
     int opt;
-    while ((opt = getopt_long(argc, argv, "c:l:s:C:k:o:t:Vh", kOpts, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "+c:l:s:C:k:o:t:Vh", kOpts, nullptr)) != -1) {
         switch (opt) {
             case 's': f.server_addr = optarg; break;
             case 'C': f.tls_cert    = optarg; break;
