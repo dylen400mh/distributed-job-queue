@@ -203,3 +203,14 @@
 6. Created `prometheus/prometheus.yml` — scrape_configs for jq-server (host.docker.internal:9090) and jq-worker (host.docker.internal:9091); 15s scrape interval
 7. Created `grafana/provisioning/datasources/prometheus.yml` — auto-provisions Prometheus datasource so Grafana starts ready
 8. Verified: `docker compose config --quiet` passes; `./build/jq-server --config config.local.yaml --dry-run` parses and validates config correctly
+
+---
+
+### Prompt
+> Debug and fix runtime issues discovered during end-to-end testing.
+
+### Actions
+1. Fixed `jq-worker` CivetException on startup — both server and worker share the same config file and would bind the same metrics/health ports; run worker with `--metrics-port 9091 --health-port 8081` flags to avoid the conflict
+2. Fixed `jq-worker` `RegisterWorker` RPC failure ("Unexpected error in RPC handling") — worker sent hostname+PID string (e.g. `MacBook-Pro.local-13380`) as `worker_id`, which server passed to PostgreSQL as `::uuid` and threw an unhandled exception. Fix: added `registration_id_` field (user-supplied UUID or empty) separate from `worker_id_` (display name); `Run()` sends `registration_id_` so an empty value lets the server generate a valid UUID
+3. Fixed `jq-ctl` flag parsing failure (unrecognized option `--queue`, `--payload`) — macOS `getopt_long` permutes argv by default, moving sub-command flags (`--queue`, `--payload`) before the subcommand words (`job`, `submit`) and then rejecting them as unrecognized. Fix: added `'+'` prefix to `ParseCtlFlags` option string in `src/common/config/flags.h` (POSIX stop-at-first-non-option mode); also removed four incorrect `#ifdef __APPLE__ optreset = 1 #endif` blocks from `src/ctl/commands/jobs.cc` and `src/ctl/commands/queues.cc` that were added during an earlier (incorrect) diagnosis
+4. Committed and pushed all fixes in two commits: `5f215a3` (worker UUID fix) and `c5116a4` (getopt fix)
