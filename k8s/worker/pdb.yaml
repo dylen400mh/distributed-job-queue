@@ -1,0 +1,15 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jq-worker-pdb
+  namespace: jq
+  labels:
+    app.kubernetes.io/part-of: distributed-job-queue
+spec:
+  # At least 1 worker must remain available during voluntary disruptions
+  # (node drains, cluster upgrades). Prevents all workers going offline
+  # simultaneously and jobs piling up as PENDING.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: jq-worker

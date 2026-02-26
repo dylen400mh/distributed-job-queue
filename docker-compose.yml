@@ -67,6 +67,7 @@ services:
       - "9095:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yaml:/etc/prometheus/alerts.yaml:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

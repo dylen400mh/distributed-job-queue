@@ -1,0 +1,116 @@
+groups:
+  - name: jq.jobs
+    interval: 30s
+    rules:
+
+      # Queue depth too high — workers can't keep up or no workers are running.
+      - alert: HighPendingQueueDepth
+        expr: sum by (queue) (jq_job_queue_depth{status="PENDING"}) > 1000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High pending job depth on queue {{ $labels.queue }}"
+          description: >
+            Queue {{ $labels.queue }} has {{ $value | humanize }} pending jobs.
+            Workers may be undersized or stuck. Consider scaling jq-worker.
+
+      # High failure rate — jobs are failing faster than they succeed.
+      - alert: HighJobFailureRate
+        expr: >
+          sum by (queue) (rate(jq_job_total{status="FAILED"}[5m]))
+          /
+          (sum by (queue) (rate(jq_job_total[5m])) > 0)
+          > 0.10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High job failure rate on queue {{ $labels.queue }}"
+          description: >
+            More than 10% of jobs on queue {{ $labels.queue }} are failing
+            (current rate: {{ $value | humanizePercentage }}).
+            Check worker logs and job payloads.
+
+      # All jobs dead-lettered — sustained dead-letter rate indicates a systemic issue.
+      - alert: DeadLetterSpiking
+        expr: rate(jq_job_total{status="DEAD_LETTERED"}[5m]) > 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Jobs being dead-lettered on queue {{ $labels.queue }}"
+          description: >
+            {{ $value | humanize }} jobs/sec are being dead-lettered on
+            queue {{ $labels.queue }}. Max retries exhausted — investigate
+            root cause before the queue accumulates permanently failed jobs.
+
+  - name: jq.workers
+    interval: 30s
+    rules:
+
+      # No workers online — all jobs will pile up as PENDING.
+      - alert: NoWorkersOnline
+        expr: jq_worker_active_count == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No jq-worker instances are online"
+          description: >
+            jq_worker_active_count is 0. No workers are registered with the
+            server. Jobs will accumulate as PENDING and won't be executed.
+            Check jq-worker deployment and connectivity to jq-server.
+
+  - name: jq.scheduler
+    interval: 30s
+    rules:
+
+      # Scheduler too slow — each cycle should complete in <200ms at p95 (NFR-003).
+      - alert: SlowSchedulerCycle
+        expr: >
+          histogram_quantile(0.95,
+            sum(rate(jq_scheduler_cycle_duration_seconds_bucket[5m])) by (le)
+          ) > 0.200
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scheduler cycle p95 exceeds 200ms"
+          description: >
+            The p95 scheduler cycle duration is {{ $value | humanizeDuration }},
+            exceeding the 200ms NFR-003 target. Check DB query performance
+            and Redis lock contention.
+
+  - name: jq.infrastructure
+    interval: 30s
+    rules:
+
+      # Kafka delivery failures — events are not reaching the event bus.
+      - alert: KafkaPublishErrors
+        expr: sum by (topic) (rate(jq_kafka_publish_errors_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka publish errors on topic {{ $labels.topic }}"
+          description: >
+            {{ $value | humanize }} errors/sec publishing to topic
+            {{ $labels.topic }}. Kafka may be unreachable or the topic
+            may not exist. Job processing continues but audit events are lost.
+
+      # Redis latency high — lock contention or network issues affecting the scheduler.
+      - alert: HighRedisLatency
+        expr: >
+          histogram_quantile(0.95,
+            sum(rate(jq_redis_operation_duration_seconds_bucket[5m])) by (le, operation)
+          ) > 0.100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Redis latency for operation {{ $labels.operation }}"
+          description: >
+            Redis p95 latency for {{ $labels.operation }} is
+            {{ $value | humanizeDuration }}, exceeding 100ms. This will
+            slow down the scheduler loop. Check ElastiCache/Redis health.

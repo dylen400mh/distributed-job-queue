@@ -2,6 +2,9 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/alerts.yaml
+
 scrape_configs:
   # jq-server exposes /metrics on its metrics port (default 9090 on the host)
   - job_name: 'jq-server'
