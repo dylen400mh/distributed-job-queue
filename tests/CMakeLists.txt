@@ -72,8 +72,8 @@ target_link_libraries(server_unit_tests PRIVATE
     jq_metrics
     jq_log
     proto_gen
-    gRPC::grpc++
-    protobuf::libprotobuf
+    PkgConfig::GRPC_PP
+    PkgConfig::PROTOBUF
     GTest::gtest_main
     GTest::gmock
 )
@@ -97,8 +97,8 @@ target_link_libraries(scheduler_unit_tests PRIVATE
     jq_metrics
     jq_log
     proto_gen
-    gRPC::grpc++
-    protobuf::libprotobuf
+    PkgConfig::GRPC_PP
+    PkgConfig::PROTOBUF
     absl::base
     absl::strings
     absl::synchronization
@@ -122,8 +122,8 @@ target_include_directories(integration_tests PRIVATE
 target_link_libraries(integration_tests PRIVATE
     jq_ctl_lib
     proto_gen
-    gRPC::grpc++
-    protobuf::libprotobuf
+    PkgConfig::GRPC_PP
+    PkgConfig::PROTOBUF
     GTest::gtest_main
 )
 add_test(NAME integration_tests COMMAND integration_tests)
