@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+# Cancel in-flight runs on the same branch when a newer push arrives.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build & Unit Tests
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------------------
+      # Dependency caching
+      # Two independent caches:
+      #   1. prometheus-cpp install prefix — keyed on the pinned version tag.
+      #      Rebuilt only when the version changes (very rare).
+      #   2. CMake build directory — keyed on CMakeLists.txt + all cmake/ files.
+      #      Avoids recompiling unchanged translation units on every push.
+      # ---------------------------------------------------------------------------
+
+      - name: Cache prometheus-cpp
+        id: cache-prometheus
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/cmake/prometheus-cpp
+          key: prometheus-cpp-v1.2.4-ubuntu22
+
+      - name: Cache CMake build directory
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: cmake-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'src/**/*.h', 'src/**/*.cc') }}
+          restore-keys: |
+            cmake-${{ runner.os }}-
+
+      # ---------------------------------------------------------------------------
+      # Install build dependencies (identical to Dockerfile.server builder stage)
+      # ---------------------------------------------------------------------------
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            git \
+            ca-certificates \
+            libgrpc++-dev \
+            libprotobuf-dev \
+            protobuf-compiler \
+            protobuf-compiler-grpc \
+            libpqxx-dev \
+            libhiredis-dev \
+            librdkafka-dev \
+            libboost-filesystem-dev \
+            libboost-headers-dev \
+            libabsl-dev \
+            libspdlog-dev \
+            nlohmann-json3-dev \
+            libyaml-cpp-dev \
+            libgtest-dev \
+            libgmock-dev
+
+      - name: Build & install prometheus-cpp
+        if: steps.cache-prometheus.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v1.2.4 \
+            https://github.com/jupp0r/prometheus-cpp.git /tmp/prometheus-cpp
+          cmake -S /tmp/prometheus-cpp -B /tmp/prometheus-cpp/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DENABLE_TESTING=OFF \
+            -DENABLE_PULL=ON
+          cmake --build /tmp/prometheus-cpp/build --parallel
+          sudo cmake --install /tmp/prometheus-cpp/build
+          rm -rf /tmp/prometheus-cpp
+
+      # ---------------------------------------------------------------------------
+      # Configure, build test targets, run tests
+      # ---------------------------------------------------------------------------
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build unit test targets
+        run: |
+          cmake --build build --parallel --target \
+            config_unit_tests \
+            kafka_unit_tests \
+            redis_unit_tests \
+            scheduler_unit_tests \
+            server_unit_tests
+
+      - name: Run unit tests
+        run: |
+          ./build/tests/config_unit_tests
+          ./build/tests/kafka_unit_tests
+          ./build/tests/redis_unit_tests
+          ./build/tests/scheduler_unit_tests
+          ./build/tests/server_unit_tests
+
+      # ---------------------------------------------------------------------------
+      # Sanity-check Docker Compose config (no daemon needed)
+      # ---------------------------------------------------------------------------
+
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet

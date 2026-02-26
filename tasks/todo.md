@@ -1,63 +1,40 @@
-# Next Step: Observability & Local Dev Completeness
+# CI/CD Pipeline
 
-## Status Assessment
+## Plan
 
-All 8 build prompts are complete. The system builds, runs, and passes end-to-end tests.
-The last work added Kubernetes manifests. Three gaps remain:
+Two workflow files:
 
-### Remaining gaps
+### `.github/workflows/ci.yml` — runs on every push and PR
+- Trigger: `push` (all branches) + `pull_request`
+- Job: `test` on `ubuntu-22.04`
+  - Cache prometheus-cpp install + CMake build dir (keyed on CMakeLists hash)
+  - Install apt build deps (matches Dockerfile builder stage)
+  - Build prometheus-cpp from source (cached after first run)
+  - `cmake -B build` + build all unit test targets
+  - Run all 5 unit test binaries
+  - Validate `docker compose config`
 
-| Area | Gap | Priority |
-|---|---|---|
-| **Prometheus** | No alert rules file — `prometheus.yml` has scrape config but no alerts | High |
-| **Grafana** | No dashboard JSON — only the datasource provisioning exists | High |
-| **K8s** | `k8s/worker/pdb.yaml` missing (worker has HPA but no PDB) | Medium |
-| **Docker Compose** | `jq-server` and `jq-worker` containers not in `docker-compose.yml` | Low* |
+### `.github/workflows/deploy.yml` — runs on push to `main` only
+- Trigger: `push` to `main`, after ci passes
+- Auth: GitHub OIDC → AWS IAM role (no long-lived keys)
+- Job 1: `build-and-push` (matrix: server, worker)
+  - Login to ECR via `aws-actions/amazon-ecr-login`
+  - Build Docker image with buildx + GitHub layer cache
+  - Push two tags: `latest` and `sha-<7-char-SHA>`
+- Job 2: `deploy` (depends on build-and-push)
+  - Configure kubectl via `aws eks update-kubeconfig`
+  - `kubectl apply -f k8s/` — applies namespace, configmap, services, HPA, PDB
+  - `kubectl set image deployment/jq-server ...` with exact SHA tag
+  - `kubectl set image deployment/jq-worker ...` with exact SHA tag
+  - `kubectl rollout status` for both deployments
 
-*docker-compose local dev works fine running binaries on the host; adding containers is optional.
-
----
-
-## Proposed Plan
-
-### Step 1 — Prometheus Alert Rules
-Create `prometheus/alerts.yaml` with rules covering:
-- High queue depth (>1000 PENDING for >2m)
-- Worker count zero (no workers online)
-- High job failure rate (>10% over 5m)
-- Scheduler cycle slow (p95 >200ms)
-- Kafka publish errors spiking
-- Redis operation errors
-
-Update `prometheus/prometheus.yml` to load the rules file (`rule_files` section).
-
-### Step 2 — Grafana Dashboard
-Create `grafana/provisioning/dashboards/jq-dashboard.json` and the provisioning sider config at `grafana/provisioning/dashboards/dashboard.yml`.
-
-Dashboard panels:
-- Job queue depth by queue/status (Gauge)
-- Job throughput (jobs/sec submitted, completed, failed — Counter rate)
-- End-to-end processing latency histogram (p50/p95/p99)
-- Active workers and per-worker concurrency
-- Scheduler cycle duration histogram
-- Kafka publish error rate
-- Redis operation duration
-- gRPC request duration by method
-
-Update `docker-compose.yml` to mount the provisioning directories so Grafana auto-loads everything on startup.
-
-### Step 3 — Worker PDB
-Create `k8s/worker/pdb.yaml` — `minAvailable: 1` so node drains don't take all workers offline simultaneously.
-
----
+### Required GitHub configuration
+- **Secret**: `AWS_ROLE_ARN` — IAM role ARN for OIDC federation
+- **Variable**: `AWS_REGION`, `AWS_ACCOUNT_ID`, `EKS_CLUSTER_NAME`
 
 ## Todo
 
-- [ ] 1. Create `prometheus/alerts.yaml` with 6 alert rules
-- [ ] 2. Update `prometheus/prometheus.yml` to reference the rules file
-- [ ] 3. Create `grafana/provisioning/dashboards/dashboard.yml` provisioning config
-- [ ] 4. Create `grafana/provisioning/dashboards/jq-dashboard.json`
-- [ ] 5. Update `docker-compose.yml` to mount grafana provisioning dirs
-- [ ] 6. Create `k8s/worker/pdb.yaml`
-- [ ] 7. Verify `docker compose config --quiet` still passes
-- [ ] 8. Commit and push
+- [ ] 1. Create `.github/workflows/ci.yml`
+- [ ] 2. Create `.github/workflows/deploy.yml`
+- [ ] 3. Verify YAML is well-formed
+- [ ] 4. Commit and push

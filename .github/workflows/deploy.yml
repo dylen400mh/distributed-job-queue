@@ -1,0 +1,156 @@
+name: Deploy
+
+on:
+  push:
+    branches: ["main"]
+
+# Only one deploy runs at a time; newer pushes queue behind the current one.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+# Required for GitHub OIDC token issuance (no long-lived AWS keys needed).
+permissions:
+  id-token: write
+  contents: read
+
+# ---------------------------------------------------------------------------
+# Required GitHub configuration before this workflow will succeed:
+#
+# Secrets  (Settings → Secrets and variables → Actions → Secrets):
+#   AWS_ROLE_ARN        IAM role ARN that GitHub OIDC can assume,
+#                       e.g. arn:aws:iam::123456789012:role/github-actions-jq
+#
+# Variables  (Settings → Secrets and variables → Actions → Variables):
+#   AWS_REGION          e.g. us-east-1
+#   AWS_ACCOUNT_ID      12-digit AWS account ID, e.g. 123456789012
+#   EKS_CLUSTER_NAME    Name of your EKS cluster, e.g. jq-cluster
+# ---------------------------------------------------------------------------
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Job 1: Build Docker images and push to ECR.
+  # Runs as a matrix so server and worker build in parallel.
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: Build & Push (${{ matrix.target }})
+    runs-on: ubuntu-22.04
+
+    strategy:
+      matrix:
+        include:
+          - target: server
+            dockerfile: docker/Dockerfile.server
+            ecr_repo: jq-server
+          - target: worker
+            dockerfile: docker/Dockerfile.worker
+            ecr_repo: jq-worker
+
+    outputs:
+      # The full ECR image URI with SHA tag, consumed by the deploy job.
+      # GitHub Actions outputs only support a single job-level value per key,
+      # so we use separate output names per matrix leg.
+      image_server: ${{ steps.image-uri.outputs.image_server }}
+      image_worker: ${{ steps.image-uri.outputs.image_worker }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          # Tag with both a fixed 'latest' and an immutable SHA tag.
+          # The deploy step uses the SHA tag for precise rollout tracking.
+          tags: |
+            ${{ steps.ecr-login.outputs.registry }}/${{ matrix.ecr_repo }}:latest
+            ${{ steps.ecr-login.outputs.registry }}/${{ matrix.ecr_repo }}:sha-${{ github.sha }}
+          # Reuse layer cache from the previous build stored in ECR itself.
+          # No external cache store required.
+          cache-from: type=registry,ref=${{ steps.ecr-login.outputs.registry }}/${{ matrix.ecr_repo }}:cache
+          cache-to: type=registry,ref=${{ steps.ecr-login.outputs.registry }}/${{ matrix.ecr_repo }}:cache,mode=max
+
+      - name: Export image URI output
+        id: image-uri
+        run: |
+          IMAGE="${{ steps.ecr-login.outputs.registry }}/${{ matrix.ecr_repo }}:sha-${{ github.sha }}"
+          echo "image_${{ matrix.target }}=${IMAGE}" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Apply manifests to EKS and roll out new images.
+  # Runs only after both matrix legs of build-and-push succeed.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to EKS
+    runs-on: ubuntu-22.04
+    needs: build-and-push
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Configure kubectl for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ vars.EKS_CLUSTER_NAME }} \
+            --region ${{ vars.AWS_REGION }}
+
+      # Apply everything except the Deployment image field.
+      # Namespace, ConfigMap, Services, HPAs, and PDBs are idempotent.
+      # The Secret template contains only placeholders — real secrets are
+      # managed outside this repo (AWS Secrets Manager + External Secrets).
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/server/service.yaml
+          kubectl apply -f k8s/server/hpa.yaml
+          kubectl apply -f k8s/server/pdb.yaml
+          kubectl apply -f k8s/worker/hpa.yaml
+          kubectl apply -f k8s/worker/pdb.yaml
+
+      # Update the running Deployment with the exact immutable SHA image tag.
+      # This triggers a rolling update; the deployment's readinessProbe ensures
+      # zero-downtime (maxUnavailable: 0 for server, maxSurge: 1).
+      - name: Roll out jq-server
+        run: |
+          kubectl set image deployment/jq-server \
+            jq-server=${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/jq-server:sha-${{ github.sha }} \
+            -n jq
+          kubectl rollout status deployment/jq-server -n jq --timeout=300s
+
+      - name: Roll out jq-worker
+        run: |
+          kubectl set image deployment/jq-worker \
+            jq-worker=${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/jq-worker:sha-${{ github.sha }} \
+            -n jq
+          kubectl rollout status deployment/jq-worker -n jq --timeout=300s
+
+      - name: Verify pods are healthy
+        run: |
+          kubectl get pods -n jq -l app=jq-server
+          kubectl get pods -n jq -l app=jq-worker
