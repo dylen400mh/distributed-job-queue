@@ -33,7 +33,10 @@ jobs:
         id: cache-prometheus
         uses: actions/cache@v4
         with:
-          path: /usr/local/lib/cmake/prometheus-cpp
+          # Cache the full install prefix so headers, .a libs, and cmake config
+          # are all restored together. A partial cache (cmake files only) would
+          # find the package at configure time but fail to link.
+          path: /opt/prometheus-cpp
           key: prometheus-cpp-v1.2.4-ubuntu22
 
       - name: Cache CMake build directory
@@ -66,7 +69,7 @@ jobs:
             libhiredis-dev \
             librdkafka-dev \
             libboost-filesystem-dev \
-            libboost-headers-dev \
+            libboost-dev \
             libabsl-dev \
             libspdlog-dev \
             nlohmann-json3-dev \
@@ -83,9 +86,10 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
             -DENABLE_TESTING=OFF \
-            -DENABLE_PULL=ON
+            -DENABLE_PULL=ON \
+            -DCMAKE_INSTALL_PREFIX=/opt/prometheus-cpp
           cmake --build /tmp/prometheus-cpp/build --parallel
-          sudo cmake --install /tmp/prometheus-cpp/build
+          cmake --install /tmp/prometheus-cpp/build
           rm -rf /tmp/prometheus-cpp
 
       # ---------------------------------------------------------------------------
@@ -93,7 +97,7 @@ jobs:
       # ---------------------------------------------------------------------------
 
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/prometheus-cpp
 
       - name: Build unit test targets
         run: |
