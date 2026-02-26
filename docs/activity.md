@@ -261,3 +261,18 @@
 6. Created `k8s/worker/pdb.yaml` — PodDisruptionBudget `minAvailable: 1` for EKS node drains
 7. Verified `docker compose config --quiet` passes clean
 8. Committed and pushed: `83032c3`
+
+---
+
+### Prompt
+> I'd like you to complete the CI/CD pipeline now as described earlier
+
+### Actions
+1. Created `.github/workflows/ci.yml` — triggers on push (all branches) + pull_request; runs on `ubuntu-22.04`; caches prometheus-cpp install (keyed by version tag) and CMake build dir (keyed by CMakeLists hash); installs same apt deps as Dockerfile builder stage; builds and runs all 5 unit test binaries; validates `docker-compose.yml` syntax
+2. Created `.github/workflows/deploy.yml` — triggers on push to `main`; uses GitHub OIDC for AWS auth (no long-lived credentials); matrix build (server + worker in parallel) pushes to ECR with `latest` and `sha-<SHA>` tags using inline ECR layer cache; deploy job applies k8s manifests (namespace, configmap, services, HPA, PDB) then rolls out both deployments via `kubectl set image` with exact SHA tag; waits on `kubectl rollout status` (300s timeout)
+3. Validated both YAML files parse cleanly
+4. Committed and pushed: `743d380`
+
+Required GitHub configuration documented in `deploy.yml` header:
+- Secret: `AWS_ROLE_ARN`
+- Variables: `AWS_REGION`, `AWS_ACCOUNT_ID`, `EKS_CLUSTER_NAME`
