@@ -27,8 +27,6 @@ endif()
 # ---------------------------------------------------------------------------
 # Dependencies — packages with CMake config files
 # ---------------------------------------------------------------------------
-find_package(gRPC CONFIG REQUIRED)
-find_package(Protobuf CONFIG REQUIRED)
 find_package(absl CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
@@ -38,10 +36,14 @@ find_package(GTest CONFIG REQUIRED)
 find_package(prometheus-cpp CONFIG REQUIRED)
 
 # ---------------------------------------------------------------------------
-# Dependencies — via PkgConfig (no CMake config provided by Homebrew)
+# Dependencies — via PkgConfig
+# gRPC and Protobuf use pkg-config on both macOS (Homebrew) and Linux
+# (Ubuntu apt). Neither ships cmake config files in standard apt packages.
 # ---------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
 
+pkg_check_modules(GRPC_PP  REQUIRED IMPORTED_TARGET grpc++)
+pkg_check_modules(PROTOBUF REQUIRED IMPORTED_TARGET protobuf)
 pkg_check_modules(LIBPQXX  REQUIRED IMPORTED_TARGET libpqxx)
 pkg_check_modules(HIREDIS  REQUIRED IMPORTED_TARGET hiredis)
 pkg_check_modules(RDKAFKA  REQUIRED IMPORTED_TARGET rdkafka++)
@@ -101,7 +103,7 @@ endforeach()
 # Static library of all generated proto/gRPC sources.
 add_library(proto_gen STATIC ${PROTO_GEN_SRCS})
 target_include_directories(proto_gen PUBLIC ${PROTO_OUT_DIR})
-target_link_libraries(proto_gen PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+target_link_libraries(proto_gen PUBLIC PkgConfig::GRPC_PP PkgConfig::PROTOBUF)
 
 # ---------------------------------------------------------------------------
 # jq_config — YAML config loader + validator
@@ -184,9 +186,8 @@ set(COMMON_LIBS
     jq_redis
     jq_kafka
     proto_gen
-    gRPC::grpc++
-    gRPC::grpc
-    protobuf::libprotobuf
+    PkgConfig::GRPC_PP
+    PkgConfig::PROTOBUF
     absl::base
     absl::strings
     absl::synchronization
@@ -230,8 +231,8 @@ target_link_libraries(jq_server_scheduler PUBLIC
     jq_metrics
     jq_log
     proto_gen
-    gRPC::grpc++
-    protobuf::libprotobuf
+    PkgConfig::GRPC_PP
+    PkgConfig::PROTOBUF
 )
 
 # ---------------------------------------------------------------------------
@@ -253,8 +254,8 @@ target_link_libraries(jq_server_grpc PUBLIC
     jq_kafka
     jq_log
     proto_gen
-    gRPC::grpc++
-    protobuf::libprotobuf
+    PkgConfig::GRPC_PP
+    PkgConfig::PROTOBUF
 )
 
 # ---------------------------------------------------------------------------
@@ -316,8 +317,8 @@ target_include_directories(jq_ctl_lib PUBLIC
 )
 target_link_libraries(jq_ctl_lib PUBLIC
     proto_gen
-    gRPC::grpc++
-    protobuf::libprotobuf
+    PkgConfig::GRPC_PP
+    PkgConfig::PROTOBUF
     nlohmann_json::nlohmann_json
     jq_config
 )
