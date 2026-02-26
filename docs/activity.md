@@ -246,3 +246,18 @@
 10. Created `k8s/server/pdb.yaml` — `minAvailable: 1` to protect HA during node drains
 11. Created `k8s/worker/deployment.yaml` — 2 replicas, `maxUnavailable: 1 / maxSurge: 0` (drain one at a time), 90s termination grace, `--server-addr jq-server.jq.svc.cluster.local:50051`
 12. Created `k8s/worker/hpa.yaml` — scales 2–10 replicas on CPU 70%; aggressive scale-up (3 pods/60s), conservative scale-down (300s window); includes comment for KEDA queue-depth scaling
+
+---
+
+### Prompt
+> yes lets start the observability
+
+### Actions
+1. Created `prometheus/alerts.yaml` — 6 alert rules in 4 groups: `jq.jobs` (HighPendingQueueDepth >1000 for 2m, HighJobFailureRate >10% for 5m, DeadLetterSpiking >1/s for 5m), `jq.workers` (NoWorkersOnline for 1m), `jq.scheduler` (SlowSchedulerCycle p95 >200ms — NFR-003), `jq.infrastructure` (KafkaPublishErrors, HighRedisLatency p95 >100ms)
+2. Updated `prometheus/prometheus.yml` — added `rule_files` section loading `/etc/prometheus/alerts.yaml`
+3. Updated `docker-compose.yml` — added bind mount for `./prometheus/alerts.yaml` into Prometheus container
+4. Created `grafana/provisioning/dashboards/dashboard.yml` — auto-provisioning config pointing at the provisioning directory
+5. Created `grafana/provisioning/dashboards/jq-dashboard.json` — 11-panel dashboard covering all FR-040 metrics: Queue Depth by Status, Job Completion Rate, Job Processing Latency (p50/p95/p99), gRPC Request Duration, Workers Online (stat with red alert at 0), Active Jobs per Worker (bar gauge), Scheduler Cycle Duration, Jobs Assigned/sec, DB Query Duration p95, Redis Operation Duration p95, Kafka Publish Error Rate
+6. Created `k8s/worker/pdb.yaml` — PodDisruptionBudget `minAvailable: 1` for EKS node drains
+7. Verified `docker compose config --quiet` passes clean
+8. Committed and pushed: `83032c3`
