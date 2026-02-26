@@ -111,8 +111,8 @@ void RunMigrations(ConnectionPool& pool,
         // Apply the migration SQL and record it — all in one transaction.
         pqxx::work txn(conn);
         txn.exec(sql);
-        txn.exec("INSERT INTO schema_migrations (version, description) VALUES ($1, $2)",
-                 pqxx::params{m.version, m.description});
+        txn.exec("INSERT INTO schema_migrations (version, description) VALUES (" +
+                 std::to_string(m.version) + ", " + txn.quote(m.description) + ")");
         txn.commit();
     }
 }
