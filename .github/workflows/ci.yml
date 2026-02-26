@@ -80,7 +80,7 @@ jobs:
       - name: Build & install prometheus-cpp
         if: steps.cache-prometheus.outputs.cache-hit != 'true'
         run: |
-          git clone --depth 1 --branch v1.2.4 \
+          git clone --depth 1 --branch v1.2.4 --recurse-submodules \
             https://github.com/jupp0r/prometheus-cpp.git /tmp/prometheus-cpp
           cmake -S /tmp/prometheus-cpp -B /tmp/prometheus-cpp/build \
             -DCMAKE_BUILD_TYPE=Release \
