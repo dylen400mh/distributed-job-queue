@@ -1,6 +1,5 @@
 #include "server/db/job_repository.h"
 
-#include <cstddef>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -14,21 +13,30 @@ namespace jq::db {
 
 namespace {
 
-// Convert pqxx::bytes (std::basic_string<std::byte>) → vector<uint8_t>.
+// Decode a hex string from PostgreSQL encode(col,'hex') → vector<uint8_t>.
+// Compatible with libpqxx 6.x and 7.x (avoids pqxx::bytes / pqxx::binarystring).
 std::vector<uint8_t> BinaryField(const pqxx::field& f) {
     if (f.is_null()) return {};
-    auto bv = f.as<pqxx::bytes>();
+    std::string hex = f.as<std::string>();
     std::vector<uint8_t> out;
-    out.reserve(bv.size());
-    for (std::byte b : bv) out.push_back(static_cast<uint8_t>(b));
+    out.reserve(hex.size() / 2);
+    for (size_t i = 0; i + 1 < hex.size(); i += 2) {
+        auto hi = static_cast<uint8_t>(hex[i]   >= 'a' ? hex[i]   - 'a' + 10 : hex[i]   - '0');
+        auto lo = static_cast<uint8_t>(hex[i+1] >= 'a' ? hex[i+1] - 'a' + 10 : hex[i+1] - '0');
+        out.push_back(static_cast<uint8_t>((hi << 4) | lo));
+    }
     return out;
 }
 
-// Convert vector<uint8_t> → pqxx::bytes.
-pqxx::bytes ToBytes(const std::vector<uint8_t>& v) {
-    pqxx::bytes out;
-    out.reserve(v.size());
-    for (uint8_t u : v) out.push_back(static_cast<std::byte>(u));
+// Convert vector<uint8_t> → lowercase hex string for decode('...','hex') in SQL.
+std::string ToHex(const std::vector<uint8_t>& v) {
+    static const char kDigits[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(v.size() * 2);
+    for (uint8_t u : v) {
+        out += kDigits[u >> 4];
+        out += kDigits[u & 0xF];
+    }
     return out;
 }
 
@@ -59,10 +67,14 @@ JobRow RowToJob(const pqxx::row& r) {
 }
 
 // Jobs SELECT projection — aliases timestamp columns to epoch seconds.
+// Binary columns (payload, result) are hex-encoded so BinaryField() can decode
+// them with plain std::string — compatible with libpqxx 6.x and 7.x.
 constexpr const char* kJobSelect =
-    "SELECT job_id::text, queue_name, payload, priority, status::text, "
+    "SELECT job_id::text, queue_name, "
+    "       encode(payload, 'hex') AS payload, "
+    "       priority, status::text, "
     "       max_retries, retry_count, "
-    "       worker_id::text, result, error_message, "
+    "       worker_id::text, encode(result, 'hex') AS result, error_message, "
     "       EXTRACT(EPOCH FROM created_at)   AS created_epoch, "
     "       EXTRACT(EPOCH FROM started_at)   AS started_epoch, "
     "       EXTRACT(EPOCH FROM completed_at) AS completed_epoch, "
@@ -121,13 +133,11 @@ std::string JobRepository::InsertJob(const std::string&         queue_name,
     auto c = Conn();
     pqxx::work txn(c.get());
 
-    pqxx::bytes payload_bytes = ToBytes(payload);
-
     auto r = txn.exec(
         "INSERT INTO jobs (queue_name, payload, priority, max_retries, status) "
         "VALUES (" +
-        txn.quote(queue_name) + ", " +
-        txn.quote(payload_bytes) + ", " +
+        txn.quote(queue_name) + ", "
+        "decode('" + ToHex(payload) + "', 'hex'), " +
         txn.quote(priority) + ", " +
         txn.quote(max_retries) + ", 'PENDING') "
         "RETURNING job_id::text");
@@ -416,9 +426,11 @@ std::vector<JobRow> JobRepository::FetchExpiredTtlJobs() {
         pqxx::work txn(c.get());
         // kJobSelect references the "jobs" table; replicate it with alias here.
         std::string sql =
-            "SELECT j.job_id::text, j.queue_name, j.payload, j.priority, j.status::text, "
+            "SELECT j.job_id::text, j.queue_name, "
+            "       encode(j.payload, 'hex') AS payload, "
+            "       j.priority, j.status::text, "
             "       j.max_retries, j.retry_count, "
-            "       j.worker_id::text, j.result, j.error_message, "
+            "       j.worker_id::text, encode(j.result, 'hex') AS result, j.error_message, "
             "       EXTRACT(EPOCH FROM j.created_at)   AS created_epoch, "
             "       EXTRACT(EPOCH FROM j.started_at)   AS started_epoch, "
             "       EXTRACT(EPOCH FROM j.completed_at) AS completed_epoch, "
@@ -478,12 +490,11 @@ bool JobRepository::StoreJobResult(const std::string&          job_id,
         pqxx::work txn(c.get());
 
         const std::string new_status = success ? "DONE" : "FAILED";
-        pqxx::bytes result_bytes = ToBytes(result);
 
         auto r = txn.exec(
             "UPDATE jobs "
             "SET status = '" + new_status + "'::job_status, "
-            "    result = " + txn.quote(result_bytes) + ", "
+            "    result = decode('" + ToHex(result) + "', 'hex'), "
             "    error_message = " + txn.quote(error_message) + ", "
             "    completed_at = now(), updated_at = now() "
             "WHERE job_id = " + txn.quote(job_id) + "::uuid "
