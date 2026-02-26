@@ -17,6 +17,11 @@ if(APPLE)
     set(ENV{PKG_CONFIG_PATH}
         "/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/libpq/lib/pkgconfig:/opt/homebrew/opt/libpqxx/lib/pkgconfig:/opt/homebrew/opt/hiredis/lib/pkgconfig:/opt/homebrew/opt/librdkafka/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}"
     )
+else()
+    # Debian/Ubuntu: cmake config files (gRPC, protobuf, abseil, Boost, …) are
+    # installed under the architecture-specific lib directory, which CMake does
+    # not search automatically.
+    list(PREPEND CMAKE_PREFIX_PATH /usr/lib/x86_64-linux-gnu)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -45,8 +50,8 @@ pkg_check_modules(YAML_CPP REQUIRED IMPORTED_TARGET yaml-cpp)
 # ---------------------------------------------------------------------------
 # Protobuf + gRPC code generation
 # ---------------------------------------------------------------------------
-find_program(PROTOC_EXE protoc HINTS /opt/homebrew/bin REQUIRED)
-find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin HINTS /opt/homebrew/bin REQUIRED)
+find_program(PROTOC_EXE protoc HINTS /opt/homebrew/bin /usr/bin REQUIRED)
+find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin HINTS /opt/homebrew/bin /usr/bin REQUIRED)
 
 set(PROTO_DIR     ${CMAKE_SOURCE_DIR}/proto)
 set(PROTO_OUT_DIR ${CMAKE_BINARY_DIR}/proto_gen)
@@ -69,11 +74,19 @@ foreach(PROTO_FILE ${PROTO_FILES})
     set(GRPC_SRC ${PROTO_OUT_DIR}/${PROTO_NAME}.grpc.pb.cc)
     set(GRPC_HDR ${PROTO_OUT_DIR}/${PROTO_NAME}.grpc.pb.h)
 
+    # On macOS the well-known protobuf types live under the Homebrew prefix.
+    # On Linux they are in /usr/include, which protoc searches by default.
+    if(APPLE)
+        set(PROTOC_EXTRA_PATH --proto_path=/opt/homebrew/include)
+    else()
+        set(PROTOC_EXTRA_PATH "")
+    endif()
+
     add_custom_command(
         OUTPUT  ${PB_SRC} ${PB_HDR} ${GRPC_SRC} ${GRPC_HDR}
         COMMAND ${PROTOC_EXE}
                 --proto_path=${PROTO_DIR}
-                --proto_path=/opt/homebrew/include
+                ${PROTOC_EXTRA_PATH}
                 --cpp_out=${PROTO_OUT_DIR}
                 --grpc_out=${PROTO_OUT_DIR}
                 --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
