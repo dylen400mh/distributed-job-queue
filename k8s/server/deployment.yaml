@@ -24,8 +24,6 @@ spec:
         app: jq-server
         app.kubernetes.io/part-of: distributed-job-queue
       annotations:
-        # Force pod restart when ConfigMap content changes
-        checksum/config: "{{ include (print .Template.BasePath \"/configmap.yaml\") . | sha256sum }}"
         prometheus.io/scrape: "true"
         prometheus.io/port: "9090"
         prometheus.io/path: "/metrics"

@@ -119,17 +119,19 @@ jobs:
             --name ${{ vars.EKS_CLUSTER_NAME }} \
             --region ${{ vars.AWS_REGION }}
 
-      # Apply everything except the Deployment image field.
-      # Namespace, ConfigMap, Services, HPAs, and PDBs are idempotent.
-      # The Secret template contains only placeholders — real secrets are
-      # managed outside this repo (AWS Secrets Manager + External Secrets).
+      # Apply all manifests except the Secret (real values are set once via
+      # kubectl outside this workflow — see k8s/secret.yaml for instructions).
+      # All resources are idempotent; Deployments are created here on first run
+      # and the image is pinned to the exact SHA tag in the steps below.
       - name: Apply Kubernetes manifests
         run: |
           kubectl apply -f k8s/namespace.yaml
           kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/server/deployment.yaml
           kubectl apply -f k8s/server/service.yaml
           kubectl apply -f k8s/server/hpa.yaml
           kubectl apply -f k8s/server/pdb.yaml
+          kubectl apply -f k8s/worker/deployment.yaml
           kubectl apply -f k8s/worker/hpa.yaml
           kubectl apply -f k8s/worker/pdb.yaml
 
