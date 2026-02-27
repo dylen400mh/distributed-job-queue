@@ -1,0 +1,212 @@
+name: Terraform
+
+on:
+  push:
+    branches: ["main"]
+    paths: ["terraform/**"]
+  pull_request:
+    paths: ["terraform/**"]
+
+# Only one Terraform workflow runs at a time to avoid concurrent state writes.
+concurrency:
+  group: terraform
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # OIDC token for AWS
+  contents: read
+  pull-requests: write  # post plan summary as PR comment
+
+# ---------------------------------------------------------------------------
+# Required GitHub configuration before this workflow will succeed:
+#
+# Secrets  (Settings → Secrets and variables → Actions → Secrets):
+#   TF_ROLE_ARN           IAM role ARN for Terraform (needs broad AWS permissions).
+#                         Separate from AWS_ROLE_ARN (deploy role) — Terraform must
+#                         be able to create VPCs, EKS, RDS, MSK, IAM, etc.
+#                         e.g. arn:aws:iam::123456789012:role/github-terraform-jq
+#
+# Variables  (Settings → Secrets and variables → Actions → Variables):
+#   AWS_REGION            e.g. us-east-1  (already set for deploy workflow)
+#   TF_BACKEND_BUCKET     Name of the S3 bucket for Terraform state
+#                         e.g. my-company-terraform-state
+#   TF_BACKEND_REGION     Region the state bucket lives in (often same as AWS_REGION)
+#                         e.g. us-east-1
+#
+# One-time manual setup (see terraform/backend.tf for full instructions):
+#   1. Create the S3 state bucket with versioning enabled
+#   2. Create the DynamoDB table "terraform-locks" (PAY_PER_REQUEST, LockID key)
+#   3. Create the Terraform IAM role (see note below on permissions)
+#   4. Set the four GitHub config values above
+# ---------------------------------------------------------------------------
+
+env:
+  TF_VERSION: "1.5.7"
+  TF_IN_AUTOMATION: "true"
+  # Pass backend config at init time so backend.tf stays free of hardcoded values.
+  TF_BACKEND_KEY: "distributed-job-queue/terraform.tfstate"
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Lint + validate — runs on every PR and push to main
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Validate
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.TF_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_BACKEND_BUCKET }}" \
+            -backend-config="key=${{ env.TF_BACKEND_KEY }}" \
+            -backend-config="region=${{ vars.TF_BACKEND_REGION }}" \
+            -backend-config="dynamodb_table=terraform-locks" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Format Check
+        working-directory: terraform
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        working-directory: terraform
+        run: terraform validate
+
+  # ---------------------------------------------------------------------------
+  # Plan — runs on every PR; posts output to job summary for easy review
+  # ---------------------------------------------------------------------------
+  plan:
+    name: Plan
+    runs-on: ubuntu-22.04
+    needs: validate
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.TF_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_BACKEND_BUCKET }}" \
+            -backend-config="key=${{ env.TF_BACKEND_KEY }}" \
+            -backend-config="region=${{ vars.TF_BACKEND_REGION }}" \
+            -backend-config="dynamodb_table=terraform-locks" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: terraform
+        run: terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
+        continue-on-error: true  # don't fail the step; we post the output below
+
+      - name: Post plan to job summary
+        run: |
+          echo "## Terraform Plan" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat terraform/plan.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post plan as PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/plan.txt', 'utf8');
+            const truncated = plan.length > 60000
+              ? plan.slice(0, 60000) + '\n...(truncated)'
+              : plan;
+            const body = `### Terraform Plan\n\`\`\`\n${truncated}\n\`\`\``;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.login === 'github-actions[bot]' && c.body.startsWith('### Terraform Plan')
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fail if plan errored
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  # ---------------------------------------------------------------------------
+  # Apply — runs only on push to main (after PR is merged)
+  # ---------------------------------------------------------------------------
+  apply:
+    name: Apply
+    runs-on: ubuntu-22.04
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.TF_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_BACKEND_BUCKET }}" \
+            -backend-config="key=${{ env.TF_BACKEND_KEY }}" \
+            -backend-config="region=${{ vars.TF_BACKEND_REGION }}" \
+            -backend-config="dynamodb_table=terraform-locks" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve
