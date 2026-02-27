@@ -276,3 +276,28 @@
 Required GitHub configuration documented in `deploy.yml` header:
 - Secret: `AWS_ROLE_ARN`
 - Variables: `AWS_REGION`, `AWS_ACCOUNT_ID`, `EKS_CLUSTER_NAME`
+
+---
+
+### Prompt
+> Proceed with Terraform AWS infrastructure
+
+### Actions
+1. Read `tasks/todo.md` and `docs/activity.md` to confirm next step: Terraform AWS infrastructure
+2. Created `terraform/providers.tf` — AWS ~5.40 + random ~3.6 providers; `default_tags` for all resources
+3. Created `terraform/backend.tf` — S3 remote state + DynamoDB locking; bootstrap instructions in comments
+4. Created `terraform/variables.tf` — 15 variables: region, cluster_name, k8s version, node instance/sizing, RDS, Redis, MSK, GitHub repo
+5. Created `terraform/outputs.tf` — 11 outputs covering every value needed for GitHub Actions config + k8s/secret.yaml endpoints
+6. Created `terraform/vpc.tf` — 10.0.0.0/16 VPC, 3 public + 3 private subnets across 3 AZs, per-AZ NAT gateways, route tables
+7. Created `terraform/ecr.tf` — jq-server + jq-worker ECR repos with image scanning + lifecycle policy (keep last 10)
+8. Created `terraform/iam.tf` — GitHub OIDC provider resource; CI/CD role scoped to main branch; EKS cluster + node IAM roles with managed policy attachments
+9. Created `terraform/security_groups.tf` — EKS nodes + control-plane SGs (cycle broken via `aws_security_group_rule`); RDS/Redis/MSK SGs locked to EKS nodes only
+10. Created `terraform/eks.tf` — EKS 1.30 cluster with control-plane logging, private subnets; managed node group 2–5 × t3.medium
+11. Created `terraform/rds.tf` — PostgreSQL 15, Multi-AZ, gp3 20 GB, 7-day backups, deletion protection
+12. Created `terraform/elasticache.tf` — Redis 7 single-node cache.t3.micro in private subnet group
+13. Created `terraform/msk.tf` — Kafka 3.6, 2 brokers kafka.t3.small, JMX + node exporter enabled
+14. Created `terraform/secrets.tf` — random_password 32 chars → Secrets Manager `jq/db-password`
+15. Fixed: `required_version` lowered to `>= 1.5` (Homebrew ships 1.5.7); OIDC provider changed from data source to resource to avoid first-apply failure; SG circular dependency broken with `aws_security_group_rule`
+16. Ran `terraform validate` — passes clean
+17. Accidentally committed terraform provider binaries (648 MB); used `git filter-repo` to scrub from history, force-pushed
+18. Updated `.gitignore` with `terraform/.terraform/` and `terraform/*.tfstate*`
