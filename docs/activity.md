@@ -301,3 +301,13 @@ Required GitHub configuration documented in `deploy.yml` header:
 16. Ran `terraform validate` — passes clean
 17. Accidentally committed terraform provider binaries (648 MB); used `git filter-repo` to scrub from history, force-pushed
 18. Updated `.gitignore` with `terraform/.terraform/` and `terraform/*.tfstate*`
+
+---
+
+### Prompt
+> ok sure [Terraform CI/CD].
+
+### Actions
+1. Created `.github/workflows/terraform.yml` — three jobs: validate (fmt+validate on all events), plan (on PRs, posts output as PR comment via github-script, updates existing comment on re-push), apply (on push to main, auto-approve). Path-filtered to `terraform/**`. Uses separate `TF_ROLE_ARN` OIDC secret. Backend injected via `-backend-config` flags at init time.
+2. Updated `tasks/todo.md` — new section with AWS manual setup checklist: S3 state bucket commands, DynamoDB lock table command, Terraform IAM role guidance, GitHub repo config table
+3. Committed and pushed: `f21557a`
