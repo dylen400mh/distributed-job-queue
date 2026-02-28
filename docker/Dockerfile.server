@@ -85,8 +85,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libyaml-cpp0.7 \
     && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /app
+
 COPY --from=builder /src/build/jq-server /usr/local/bin/jq-server
-COPY --from=builder /src/db/migrations   /etc/jq/migrations
+COPY --from=builder /src/db/migrations   /app/db/migrations
 
 # prometheus-cpp is statically linked; no extra runtime package needed
 

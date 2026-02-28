@@ -81,7 +81,7 @@ resource "aws_security_group_rule" "nodes_from_cp_ephemeral" {
 
 resource "aws_security_group" "rds" {
   name        = "${var.cluster_name}-rds"
-  description = "RDS PostgreSQL — only from EKS nodes"
+  description = "RDS PostgreSQL - only from EKS nodes"
   vpc_id      = aws_vpc.main.id
 
   ingress {
@@ -105,7 +105,7 @@ resource "aws_security_group" "rds" {
 
 resource "aws_security_group" "redis" {
   name        = "${var.cluster_name}-redis"
-  description = "ElastiCache Redis — only from EKS nodes"
+  description = "ElastiCache Redis - only from EKS nodes"
   vpc_id      = aws_vpc.main.id
 
   ingress {
@@ -129,7 +129,7 @@ resource "aws_security_group" "redis" {
 
 resource "aws_security_group" "msk" {
   name        = "${var.cluster_name}-msk"
-  description = "MSK Kafka — only from EKS nodes"
+  description = "MSK Kafka - only from EKS nodes"
   vpc_id      = aws_vpc.main.id
 
   ingress {

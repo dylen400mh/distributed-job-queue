@@ -14,9 +14,9 @@
 
 terraform {
   backend "s3" {
-    bucket         = "REPLACE_WITH_YOUR_STATE_BUCKET"
+    bucket         = "jq-terraform-state-865091755721"
     key            = "distributed-job-queue/terraform.tfstate"
-    region         = "REPLACE_WITH_YOUR_REGION"
+    region         = "us-east-1"
     dynamodb_table = "terraform-locks"
     encrypt        = true
   }

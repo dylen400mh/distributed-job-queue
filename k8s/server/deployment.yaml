@@ -39,10 +39,8 @@ spec:
 
       containers:
         - name: jq-server
-          # Replace with your ECR image URI, e.g.:
-          # <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/jq-server:<TAG>
-          image: jq-server:latest
-          imagePullPolicy: IfNotPresent
+          image: 865091755721.dkr.ecr.us-east-1.amazonaws.com/jq-server:v0.1.0
+          imagePullPolicy: Always
 
           args:
             - "--config"
