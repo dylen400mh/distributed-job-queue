@@ -1,11 +1,11 @@
 #include "server/grpc/admin_service_impl.h"
 
-#include <chrono>
 #include <string>
 
 #include <grpcpp/grpcpp.h>
 #include <pqxx/pqxx>
 
+#include "common/kafka/kafka_producer.h"
 #include "common/logging/logger.h"
 #include "common/redis/redis_client.h"
 #include "common.pb.h"
@@ -71,12 +71,14 @@ AdminServiceImpl::AdminServiceImpl(db::IQueueRepository&  queue_repo,
                                     db::IWorkerRepository& worker_repo,
                                     WorkerRegistry&        registry,
                                     db::ConnectionPool&    pool,
-                                    const RedisConfig&     redis_cfg)
+                                    const RedisConfig&     redis_cfg,
+                                    IKafkaProducer&        kafka)
     : queue_repo_(queue_repo)
     , worker_repo_(worker_repo)
     , registry_(registry)
     , pool_(pool)
     , redis_cfg_(redis_cfg)
+    , kafka_(kafka)
 {}
 
 // ---------------------------------------------------------------------------
@@ -278,13 +280,14 @@ grpc::Status AdminServiceImpl::GetSystemStatus(grpc::ServerContext*,
         if (!ok) all_healthy = false;
     }
 
-    // Kafka — report healthy if the registry is functional; deep Kafka
-    // checks require a real producer + topic probe which is expensive.
+    // Kafka — probe broker reachability via metadata fetch.
     {
         auto* comp = resp->add_components();
         comp->set_name("kafka");
-        comp->set_healthy(true);
-        comp->set_message("not checked");
+        bool ok = kafka_.IsHealthy();
+        comp->set_healthy(ok);
+        comp->set_message(ok ? "reachable" : "unreachable");
+        if (!ok) all_healthy = false;
     }
 
     // Active worker count from in-memory registry.

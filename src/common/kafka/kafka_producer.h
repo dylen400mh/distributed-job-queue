@@ -35,6 +35,8 @@ public:
                          const std::string&         key,
                          const std::vector<uint8_t>& payload) = 0;
     virtual void Flush(int timeout_ms = 5000) = 0;
+    // Returns true if the Kafka broker is reachable. Default returns true for mocks.
+    virtual bool IsHealthy() { return true; }
 };
 
 // ---------------------------------------------------------------------------
@@ -61,6 +63,9 @@ public:
 
     // Block until all queued messages are delivered or timeout_ms elapses.
     void Flush(int timeout_ms = 5000) override;
+
+    // Probe broker connectivity via metadata fetch (2s timeout).
+    bool IsHealthy() override;
 
 private:
     std::unique_ptr<RdKafka::Producer> producer_;

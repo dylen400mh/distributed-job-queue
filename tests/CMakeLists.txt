@@ -60,6 +60,7 @@ add_test(NAME kafka_unit_tests COMMAND kafka_unit_tests)
 # ---------------------------------------------------------------------------
 add_executable(server_unit_tests
     unit/server/job_service_test.cc
+    unit/server/admin_service_test.cc
 )
 target_include_directories(server_unit_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src

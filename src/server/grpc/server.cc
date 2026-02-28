@@ -21,7 +21,7 @@ GrpcServer::GrpcServer(const Config&       cfg,
     , registry_()
     , job_svc_(job_repo_, kafka)
     , worker_svc_(job_repo_, worker_repo_, kafka, registry_)
-    , admin_svc_(queue_repo_, worker_repo_, registry_, pool, cfg.redis)
+    , admin_svc_(queue_repo_, worker_repo_, registry_, pool, cfg.redis, kafka)
     , scheduler_(pool, cfg.redis, kafka, registry_, cfg.scheduler)
 {}
 

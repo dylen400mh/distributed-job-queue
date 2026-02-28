@@ -140,4 +140,12 @@ void KafkaProducer::Flush(int timeout_ms) {
     }
 }
 
+bool KafkaProducer::IsHealthy() {
+    if (!producer_) return false;
+    RdKafka::Metadata* md = nullptr;
+    RdKafka::ErrorCode err = producer_->metadata(false, nullptr, &md, 2000);
+    delete md;
+    return err == RdKafka::ERR_NO_ERROR;
+}
+
 }  // namespace jq

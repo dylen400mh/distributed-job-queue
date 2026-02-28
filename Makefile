@@ -40,7 +40,7 @@ test-e2e: build services
 	@sleep 5
 	@./build/jq-server --config config.local.yaml & echo $$! > /tmp/jq-server.pid
 	@sleep 3
-	@./build/jq-worker --config config.local.yaml --server-addr localhost:50051 & echo $$! > /tmp/jq-worker.pid
+	@./build/jq-worker --config config.local.yaml --server-addr localhost:50051 --metrics-port 9091 & echo $$! > /tmp/jq-worker.pid
 	@sleep 2
 	@JQ_TEST_SERVER_ADDR=localhost:50051 ./build/tests/integration_tests; \
 	  EXIT=$$?; \

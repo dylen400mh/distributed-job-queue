@@ -132,3 +132,237 @@ TEST_F(E2ETest, GetSystemStatus_ReturnsHealthy) {
     EXPECT_TRUE(resp.healthy());
     EXPECT_GT(resp.components_size(), 0);
 }
+
+// ---------------------------------------------------------------------------
+// New integration scenarios
+// ---------------------------------------------------------------------------
+
+// FR-030/031: Queue lifecycle — create, list, delete.
+TEST_F(E2ETest, QueueLifecycle_CreateListDeleteQueue) {
+    const std::string name = "e2e-lifecycle-queue";
+
+    // Create.
+    {
+        CreateQueueRequest req;
+        req.set_name(name);
+        req.set_max_retries(2);
+        CreateQueueResponse resp;
+        auto ctx = MakeCtx();
+        auto s = admin_stub_->CreateQueue(ctx.get(), req, &resp);
+        // OK or ALREADY_EXISTS (left over from a prior run).
+        ASSERT_TRUE(s.ok() || s.error_code() == grpc::StatusCode::ALREADY_EXISTS)
+            << s.error_message();
+    }
+
+    // List — verify the queue is present.
+    {
+        ListQueuesRequest req;
+        ListQueuesResponse resp;
+        auto ctx = MakeCtx();
+        auto s = admin_stub_->ListQueues(ctx.get(), req, &resp);
+        ASSERT_TRUE(s.ok()) << s.error_message();
+        bool found = false;
+        for (int i = 0; i < resp.queues_size(); ++i) {
+            if (resp.queues(i).name() == name) { found = true; break; }
+        }
+        EXPECT_TRUE(found) << "Created queue not found in ListQueues";
+    }
+
+    // Delete (queue is empty so force=false is fine).
+    {
+        DeleteQueueRequest req;
+        req.set_name(name);
+        DeleteQueueResponse resp;
+        auto ctx = MakeCtx();
+        auto s = admin_stub_->DeleteQueue(ctx.get(), req, &resp);
+        EXPECT_TRUE(s.ok()) << s.error_message();
+    }
+}
+
+// FR-033/034: Failing job retries and eventually dead-letters.
+TEST_F(E2ETest, RetryOnFailure_EventuallyDeadLetters) {
+    // Submit a job whose command always exits non-zero.  max_retries=1 means
+    // the scheduler will retry once and then dead-letter on the second failure.
+    SubmitJobRequest sub_req;
+    sub_req.set_queue_name("default");
+    sub_req.set_payload(R"({"command":["sh","-c","exit 1"]})");
+    sub_req.set_max_retries(1);
+
+    SubmitJobResponse sub_resp;
+    {
+        auto ctx = MakeCtx();
+        auto s = job_stub_->SubmitJob(ctx.get(), sub_req, &sub_resp);
+        ASSERT_TRUE(s.ok()) << s.error_message();
+    }
+    const std::string job_id = sub_resp.job_id();
+
+    // Poll for DEAD_LETTERED (up to 90 s: first run + 10-15 s backoff + second run).
+    GetJobStatusRequest status_req;
+    status_req.set_job_id(job_id);
+    JobStatus final_status = PENDING;
+    for (int i = 0; i < 180; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        GetJobStatusResponse status_resp;
+        auto ctx = MakeCtx();
+        auto s = job_stub_->GetJobStatus(ctx.get(), status_req, &status_resp);
+        ASSERT_TRUE(s.ok()) << s.error_message();
+        final_status = status_resp.job().status();
+        if (final_status == DEAD_LETTERED) break;
+    }
+    EXPECT_EQ(final_status, DEAD_LETTERED)
+        << "Job did not reach DEAD_LETTERED within 90s (final: " << final_status << ")";
+}
+
+// FR-015: Cancelling a pending job transitions it to DEAD_LETTERED.
+TEST_F(E2ETest, CancelPendingJob_BecomesDeadLettered) {
+    // Use a queue the worker is NOT subscribed to (worker subscribes to "default" only).
+    const std::string queue_name = "cancel-test-queue";
+    {
+        CreateQueueRequest req;
+        req.set_name(queue_name);
+        CreateQueueResponse resp;
+        auto ctx = MakeCtx();
+        // Ignore ALREADY_EXISTS from a prior run.
+        admin_stub_->CreateQueue(ctx.get(), req, &resp);
+    }
+
+    // Submit — job stays PENDING because no worker drains this queue.
+    SubmitJobRequest sub_req;
+    sub_req.set_queue_name(queue_name);
+    sub_req.set_payload(R"({"command":["echo","cancel-me"]})");
+    sub_req.set_max_retries(0);
+    SubmitJobResponse sub_resp;
+    {
+        auto ctx = MakeCtx();
+        auto s = job_stub_->SubmitJob(ctx.get(), sub_req, &sub_resp);
+        ASSERT_TRUE(s.ok()) << s.error_message();
+    }
+    const std::string job_id = sub_resp.job_id();
+
+    // Cancel.
+    {
+        CancelJobRequest req;
+        req.set_job_id(job_id);
+        CancelJobResponse resp;
+        auto ctx = MakeCtx();
+        auto s = job_stub_->CancelJob(ctx.get(), req, &resp);
+        EXPECT_TRUE(s.ok()) << s.error_message();
+    }
+
+    // Assert DEAD_LETTERED.
+    {
+        GetJobStatusRequest req;
+        req.set_job_id(job_id);
+        GetJobStatusResponse resp;
+        auto ctx = MakeCtx();
+        auto s = job_stub_->GetJobStatus(ctx.get(), req, &resp);
+        ASSERT_TRUE(s.ok()) << s.error_message();
+        EXPECT_EQ(resp.job().status(), DEAD_LETTERED);
+    }
+
+    // Cleanup.
+    {
+        DeleteQueueRequest req;
+        req.set_name(queue_name);
+        req.set_force(true);
+        DeleteQueueResponse resp;
+        auto ctx = MakeCtx();
+        admin_stub_->DeleteQueue(ctx.get(), req, &resp);
+    }
+}
+
+// FR-013: GetJobLogs returns events covering the full job lifecycle.
+TEST_F(E2ETest, GetJobLogs_ShowsStateTransitions) {
+    // Submit a fast job and wait for it to complete.
+    SubmitJobRequest sub_req;
+    sub_req.set_queue_name("default");
+    sub_req.set_payload(R"({"command":["echo","log-test"]})");
+    sub_req.set_max_retries(0);
+    SubmitJobResponse sub_resp;
+    {
+        auto ctx = MakeCtx();
+        auto s = job_stub_->SubmitJob(ctx.get(), sub_req, &sub_resp);
+        ASSERT_TRUE(s.ok()) << s.error_message();
+    }
+    const std::string job_id = sub_resp.job_id();
+
+    // Wait for DONE.
+    GetJobStatusRequest status_req;
+    status_req.set_job_id(job_id);
+    for (int i = 0; i < 60; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        GetJobStatusResponse status_resp;
+        auto ctx = MakeCtx();
+        job_stub_->GetJobStatus(ctx.get(), status_req, &status_resp);
+        if (status_resp.job().status() == DONE) break;
+    }
+
+    // Fetch logs and verify state transitions.
+    GetJobLogsRequest logs_req;
+    logs_req.set_job_id(job_id);
+    GetJobLogsResponse logs_resp;
+    {
+        auto ctx = MakeCtx();
+        auto s = job_stub_->GetJobLogs(ctx.get(), logs_req, &logs_resp);
+        ASSERT_TRUE(s.ok()) << s.error_message();
+    }
+    EXPECT_GE(logs_resp.events_size(), 2)
+        << "Expected at least 2 job events (submission + at least one transition)";
+
+    bool has_done_event = false;
+    for (int i = 0; i < logs_resp.events_size(); ++i) {
+        if (logs_resp.events(i).to_status() == DONE) { has_done_event = true; break; }
+    }
+    EXPECT_TRUE(has_done_event) << "No DONE event found in job logs";
+}
+
+// FR-012: ListJobs supports filtering by queue name and returns paginated results.
+TEST_F(E2ETest, ListJobs_WithQueueFilter_ReturnsDoneJobs) {
+    // Submit a job, wait for it to complete, then verify ListJobs returns it.
+    SubmitJobRequest sub_req;
+    sub_req.set_queue_name("default");
+    sub_req.set_payload(R"({"command":["echo","list-filter-test"]})");
+    sub_req.set_max_retries(0);
+    SubmitJobResponse sub_resp;
+    {
+        auto ctx = MakeCtx();
+        auto s = job_stub_->SubmitJob(ctx.get(), sub_req, &sub_resp);
+        ASSERT_TRUE(s.ok()) << s.error_message();
+    }
+    const std::string job_id = sub_resp.job_id();
+
+    // Wait for DONE.
+    GetJobStatusRequest status_req;
+    status_req.set_job_id(job_id);
+    for (int i = 0; i < 60; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        GetJobStatusResponse status_resp;
+        auto ctx = MakeCtx();
+        job_stub_->GetJobStatus(ctx.get(), status_req, &status_resp);
+        if (status_resp.job().status() == DONE) break;
+    }
+
+    // ListJobs filtered by queue_name="default" — must return a non-empty list.
+    {
+        ListJobsRequest req;
+        req.set_queue_name("default");
+        ListJobsResponse resp;
+        auto ctx = MakeCtx();
+        auto s = job_stub_->ListJobs(ctx.get(), req, &resp);
+        ASSERT_TRUE(s.ok()) << s.error_message();
+        EXPECT_GT(resp.jobs_size(), 0)
+            << "Expected at least one job in 'default' queue after submission";
+    }
+
+    // ListJobs filtered by queue_name that doesn't exist — must return empty.
+    {
+        ListJobsRequest req;
+        req.set_queue_name("nonexistent-queue-xyz-99999");
+        ListJobsResponse resp;
+        auto ctx = MakeCtx();
+        auto s = job_stub_->ListJobs(ctx.get(), req, &resp);
+        ASSERT_TRUE(s.ok()) << s.error_message();
+        EXPECT_EQ(resp.jobs_size(), 0)
+            << "Expected no jobs for a queue that doesn't exist";
+    }
+}
