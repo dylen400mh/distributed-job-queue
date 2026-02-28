@@ -34,8 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Kafka client
     librdkafka-dev \
     # Utilities
+    libboost-dev \
     libboost-filesystem-dev \
-    libboost-headers-dev \
     libabsl-dev \
     libspdlog-dev \
     nlohmann-json3-dev \
@@ -43,13 +43,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Build prometheus-cpp from source (not packaged in Ubuntu 22.04 apt)
-RUN git clone --depth 1 --branch v1.2.4 \
+RUN git clone --depth 1 --branch v1.2.4 --recurse-submodules --shallow-submodules \
     https://github.com/jupp0r/prometheus-cpp.git /tmp/prometheus-cpp \
     && cmake -S /tmp/prometheus-cpp -B /tmp/prometheus-cpp/build \
        -DCMAKE_BUILD_TYPE=Release \
        -DBUILD_SHARED_LIBS=OFF \
        -DENABLE_TESTING=OFF \
        -DENABLE_PULL=ON \
+       -DENABLE_PUSH=OFF \
     && cmake --build /tmp/prometheus-cpp/build --parallel \
     && cmake --install /tmp/prometheus-cpp/build \
     && rm -rf /tmp/prometheus-cpp
@@ -57,9 +58,12 @@ RUN git clone --depth 1 --branch v1.2.4 \
 WORKDIR /src
 COPY . .
 
-RUN cmake -B build \
+RUN ARCH=$(dpkg --print-architecture) && \
+    cmake -B build \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_EXPORT_COMPILE_COMMANDS=OFF \
+      -DCMAKE_PREFIX_PATH="/usr/lib/${ARCH}-linux-gnu;/usr/lib/cmake" \
+      -DBUILD_TESTS=OFF \
     && cmake --build build --parallel --target jq-server
 
 # ---------------------------------------------------------------------------
@@ -71,12 +75,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    libgrpc++1.51 \
+    libgrpc++1 \
     libprotobuf23 \
     libpqxx-6.4 \
     libhiredis0.14 \
     librdkafka++1 \
-    libabsl2021.11.02 \
+    libabsl20210324 \
     libspdlog1 \
     libyaml-cpp0.7 \
     && rm -rf /var/lib/apt/lists/*
@@ -86,9 +90,9 @@ COPY --from=builder /src/db/migrations   /etc/jq/migrations
 
 # prometheus-cpp is statically linked; no extra runtime package needed
 
-EXPOSE 50051   # gRPC
-EXPOSE 9090    # Prometheus metrics
-EXPOSE 8080    # Health endpoints
+EXPOSE 50051
+EXPOSE 9090
+EXPOSE 8080
 
 ENTRYPOINT ["jq-server"]
 CMD ["--help"]

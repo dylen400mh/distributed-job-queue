@@ -32,8 +32,12 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 # Boost.System is header-only in Boost >= 1.69; only request filesystem.
 find_package(Boost CONFIG REQUIRED COMPONENTS filesystem)
-find_package(GTest CONFIG REQUIRED)
 find_package(prometheus-cpp CONFIG REQUIRED)
+
+option(BUILD_TESTS "Build unit and integration tests" ON)
+if(BUILD_TESTS)
+    find_package(GTest CONFIG REQUIRED)
+endif()
 
 # ---------------------------------------------------------------------------
 # Dependencies — via PkgConfig
@@ -333,5 +337,7 @@ target_link_libraries(jq-ctl PRIVATE jq_ctl_lib ${COMMON_LIBS})
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-enable_testing()
-add_subdirectory(tests)
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
