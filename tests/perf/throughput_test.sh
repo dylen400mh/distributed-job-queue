@@ -38,6 +38,9 @@ pass() { echo -e "${GREEN}[PASS]${RESET} $*"; }
 fail() { echo -e "${RED}[FAIL]${RESET} $*"; FAILED=1; }
 info() { echo -e "${YELLOW}[INFO]${RESET} $*"; }
 
+# Cross-platform millisecond timestamp (macOS date lacks %N)
+now_ms() { python3 -c "import time; print(int(time.time() * 1000))"; }
+
 FAILED=0
 TMPDIR_LOCAL="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_LOCAL"' EXIT
@@ -67,7 +70,7 @@ PAYLOAD='{"command":["echo","perf"]}'
 IDS_FILE="$TMPDIR_LOCAL/job_ids.txt"
 : > "$IDS_FILE"
 
-T_START=$(date +%s%3N)  # milliseconds
+T_START=$(now_ms)  # milliseconds
 
 # Submit TOTAL_JOBS jobs in parallel (up to 64 concurrent).
 # Each invocation of jq-ctl prints the job_id to stdout.
@@ -86,7 +89,7 @@ for (( i=0; i<TOTAL_JOBS; i+=BATCH )); do
 done
 echo ""
 
-T_END=$(date +%s%3N)
+T_END=$(now_ms)
 ELAPSED_MS=$(( T_END - T_START ))
 ELAPSED_S=$(echo "scale=3; $ELAPSED_MS / 1000" | bc)
 ACTUAL_IDS=$(wc -l < "$IDS_FILE" | tr -d ' ')
@@ -121,25 +124,21 @@ done < "$IDS_FILE"
 LATENCY_FILE="$TMPDIR_LOCAL/latencies.txt"
 : > "$LATENCY_FILE"
 
-T_MEASURE_START=$(date +%s%3N)
+T_MEASURE_START=$(now_ms)
 DEADLINE=$(( T_MEASURE_START + MAX_WAIT_S * 1000 ))
 
 # Poll each sampled job until DONE / DEAD_LETTERED / timeout.
-declare -A JOB_START_MS
-for id in "${SAMPLE_IDS[@]}"; do
-    JOB_START_MS[$id]=$(date +%s%3N)
-done
-
+# Use T_MEASURE_START as the common origin (all jobs were submitted just before).
 PENDING_IDS=( "${SAMPLE_IDS[@]}" )
-while [ ${#PENDING_IDS[@]} -gt 0 ] && [ "$(date +%s%3N)" -lt "$DEADLINE" ]; do
+while [ ${#PENDING_IDS[@]} -gt 0 ] && [ "$(now_ms)" -lt "$DEADLINE" ]; do
     sleep 0.5
     STILL_PENDING=()
     for id in "${PENDING_IDS[@]}"; do
         STATUS=$("$JQ_CTL" --server-addr "$SERVER_ADDR" job status "$id" 2>/dev/null \
                    | grep -oE 'DONE|DEAD_LETTERED|FAILED' | head -1 || true)
         if [[ "$STATUS" == "DONE" || "$STATUS" == "DEAD_LETTERED" || "$STATUS" == "FAILED" ]]; then
-            NOW=$(date +%s%3N)
-            LAT_MS=$(( NOW - JOB_START_MS[$id] ))
+            NOW=$(now_ms)
+            LAT_MS=$(( NOW - T_MEASURE_START ))
             echo "$LAT_MS" >> "$LATENCY_FILE"
         else
             STILL_PENDING+=("$id")
