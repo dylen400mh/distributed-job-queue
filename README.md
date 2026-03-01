@@ -237,7 +237,7 @@ kubectl port-forward -n jq service/jq-server 50051:50051 &
 
 ## Requirements Status
 
-Full results in [docs/test-results.md](docs/test-results.md).
+Full results in [docs/test-results.md](docs/test-results.md). Performance methodology and charts in [docs/performance.md](docs/performance.md).
 
 | Category | Tested | Pass | Partial | Not Tested |
 |---|---|---|---|---|
