@@ -127,9 +127,11 @@ void StartMetricsServer(int port) {
     // prometheus::Exposer runs its own background thread; keep it alive via a
     // static so it outlives this call.
     static prometheus::Exposer exposer{"0.0.0.0:" + std::to_string(port)};
-    exposer.RegisterCollectable(
-        std::shared_ptr<prometheus::Registry>(
-            &RegistryInstance(), [](prometheus::Registry*) {}));  // no-op deleter
+    // RegisterCollectable stores a weak_ptr internally, so the shared_ptr
+    // must outlive this call. Keep it as a static so the weak_ptr never expires.
+    static auto registry_ptr = std::shared_ptr<prometheus::Registry>(
+        &RegistryInstance(), [](prometheus::Registry*) {});  // no-op deleter
+    exposer.RegisterCollectable(registry_ptr);
 }
 
 }  // namespace jq::metrics

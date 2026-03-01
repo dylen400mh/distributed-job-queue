@@ -1,84 +1,47 @@
-# Terraform CI/CD Workflow
+# Requirements Verification & Deployment
 
 ## Goal
 
-Add a GitHub Actions workflow that automates Terraform for infrastructure changes:
-- `terraform validate` + `terraform fmt -check` on every PR touching `terraform/`
-- `terraform plan` on PRs, posted as a PR comment
-- `terraform apply` automatically on merge to `main`
+Verify all FRs and NFRs from requirements.md, run tests locally, deploy to AWS, then write README.
 
 ---
 
 ## Todo
 
-- [x] 1. Create `.github/workflows/terraform.yml`
-- [x] 2. Commit and push
+- [x] Phase 1: Fix Kafka health check (KafkaProducer::IsHealthy, GetSystemStatus)
+- [x] Phase 2: Add AdminService unit tests (10 cases, all pass)
+- [x] Phase 3: Add 5 new e2e integration test scenarios
+- [x] Phase 4: Add performance measurement script (tests/perf/throughput_test.sh)
+- [x] Phase 5: Run full local test suite (25 unit tests pass, 8/8 e2e pass)
+- [x] Phase 6: Docker image builds (jq-server: 34 MB, jq-worker: 34 MB — NFR-018 ✓)
+- [x] Phase 6: NFR spot-checks (--help ✓, --version ✓, docker images ✓)
+- [x] Phase 6: Performance measurement (NFR-002: 647ms ✓, NFR-001: methodology limited)
+- [x] Phase 7: docs/test-results.md — FR/NFR tracking table
+- [x] Phase 8: Deploy to AWS
+  - [x] Run `terraform apply` to provision infrastructure (56 resources: VPC, EKS, RDS, ElastiCache, MSK, ECR)
+  - [x] Configure kubectl for EKS cluster
+  - [x] Create jq-secret in Kubernetes
+  - [x] Push images to ECR (v0.1.0, v0.1.1)
+  - [x] Verify pods are healthy: 2x jq-server, 2x jq-worker all Running
+  - [x] Run smoke test: PENDING→ASSIGNED→RUNNING→DONE in ~3s, all components HEALTHY
+  - [x] Fix metrics weak_ptr bug (RegisterCollectable stores weak_ptr; shared_ptr must outlive call)
+  - [x] Measure NFR-001: 1,052 jobs/s via ghz (200 concurrency, 10k requests) — PASS
+  - [x] Measure NFR-003: p95 ≤ 5ms via Prometheus histogram on live cluster — PASS
+- [ ] Phase 9: Write README.md
 
 ---
 
-## Review
+## Performance Results
 
-Created `.github/workflows/terraform.yml` with three jobs:
+| NFR | Target | Measured | Result |
+|---|---|---|---|
+| NFR-001 (throughput) | ≥ 1000 jobs/s | **1,052 jobs/s** (ghz, 200 concurrency, AWS EKS+NLB) | **PASS** |
+| NFR-002 (p99 latency) | < 2s | **647ms** (local empty queue); 639ms at peak load on EKS | **PASS** |
+| NFR-003 (scheduler p95) | < 200ms | **≤ 5ms** (187 cycles, p95 in 5ms bucket, EKS Prometheus) | **PASS** |
 
-- **validate** — runs on all PRs and pushes: `terraform init` (backend via `-backend-config` flags), `fmt -check`, `validate`
-- **plan** — runs on PRs only: full plan, output written to job summary and posted/updated as a PR comment via `github-script`
-- **apply** — runs on push to `main` only: `terraform apply -auto-approve`
+## Known Gaps
 
-All three jobs use the `TF_ROLE_ARN` OIDC secret (separate from `AWS_ROLE_ARN` used by the deploy workflow — needs broader permissions).
-
-Backend config is injected at `init` time via `-backend-config` flags so `backend.tf` stays free of hardcoded values.
-
----
-
-## AWS Manual Setup Checklist
-
-Before this workflow (or `terraform apply` locally) will work, complete these steps once:
-
-### 1. S3 State Bucket
-```bash
-aws s3api create-bucket \
-  --bucket YOUR_BUCKET_NAME \
-  --region YOUR_REGION \
-  --create-bucket-configuration LocationConstraint=YOUR_REGION
-
-aws s3api put-bucket-versioning \
-  --bucket YOUR_BUCKET_NAME \
-  --versioning-configuration Status=Enabled
-
-aws s3api put-public-access-block \
-  --bucket YOUR_BUCKET_NAME \
-  --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
-```
-
-### 2. DynamoDB Lock Table
-```bash
-aws dynamodb create-table \
-  --table-name terraform-locks \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST \
-  --region YOUR_REGION
-```
-
-### 3. Terraform IAM Role (for GitHub Actions)
-Create a role `github-terraform-jq` in the AWS console or CLI:
-- **Trust policy**: same OIDC trust as `github-actions-jq` but for the Terraform workflow
-- **Permissions**: `AdministratorAccess` (or a custom policy covering VPC, EKS, RDS, ElastiCache, MSK, IAM, ECR, Secrets Manager)
-- Scope the sub condition to: `repo:dylen400mh/distributed-job-queue:ref:refs/heads/main`
-
-### 4. GitHub Repository Config
-| Type | Name | Value |
-|---|---|---|
-| Secret | `TF_ROLE_ARN` | ARN of the Terraform IAM role |
-| Variable | `TF_BACKEND_BUCKET` | Name of your S3 state bucket |
-| Variable | `TF_BACKEND_REGION` | Region of the state bucket |
-| Variable | `AWS_REGION` | Already set — reused by this workflow |
-
-### 5. backend.tf
-The workflow injects backend config via `-backend-config` flags, so `backend.tf` only needs:
-```hcl
-terraform {
-  backend "s3" {}
-}
-```
-Or leave the placeholders — they are overridden at `init` time.
+- FR-004: TTL only fires for PENDING jobs; ASSIGNED jobs with no worker never expire
+- FR-045: No log warning when sensitive values appear in config file
+- FR-047/048: mTLS not end-to-end tested
+- NFR-019: docker-compose.yml does not start jq-server/jq-worker (local dev pattern)

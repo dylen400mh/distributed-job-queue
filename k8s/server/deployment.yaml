@@ -39,7 +39,7 @@ spec:
 
       containers:
         - name: jq-server
-          image: 865091755721.dkr.ecr.us-east-1.amazonaws.com/jq-server:v0.1.0
+          image: 865091755721.dkr.ecr.us-east-1.amazonaws.com/jq-server:v0.1.1
           imagePullPolicy: Always
 
           args:
