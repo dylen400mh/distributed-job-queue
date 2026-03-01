@@ -1,8 +1,7 @@
 name: Deploy
 
 on:
-  push:
-    branches: ["main"]
+  workflow_dispatch:
 
 # Only one deploy runs at a time; newer pushes queue behind the current one.
 concurrency:

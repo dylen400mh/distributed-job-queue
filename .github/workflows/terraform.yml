@@ -1,11 +1,7 @@
 name: Terraform
 
 on:
-  push:
-    branches: ["main"]
-    paths: ["terraform/**"]
-  pull_request:
-    paths: ["terraform/**"]
+  workflow_dispatch:
 
 # Only one Terraform workflow runs at a time to avoid concurrent state writes.
 concurrency:
