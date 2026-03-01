@@ -6,6 +6,19 @@ All operator interaction is through `jq-ctl` — there is no UI.
 
 ---
 
+## Highlights
+
+| | |
+|---|---|
+| **Throughput** | 1,052 jobs/sec sustained (ghz, 200 concurrent connections, live EKS) |
+| **p99 latency** | 661ms submit-to-execution-start at peak load (target: 2,000ms) |
+| **Scheduler p95** | ≤ 5ms per cycle (target: 200ms) — measured across 118,000+ cycles |
+| **Docker images** | 34MB server / 34MB worker (target: < 200MB) |
+| **Test coverage** | 25 unit tests + 8 end-to-end tests, all passing |
+| **Infrastructure** | Deployed on AWS EKS: RDS PostgreSQL, ElastiCache Redis, MSK Kafka, Terraform |
+
+---
+
 ## Architecture
 
 ```
