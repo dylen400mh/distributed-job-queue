@@ -311,3 +311,18 @@ Required GitHub configuration documented in `deploy.yml` header:
 1. Created `.github/workflows/terraform.yml` — three jobs: validate (fmt+validate on all events), plan (on PRs, posts output as PR comment via github-script, updates existing comment on re-push), apply (on push to main, auto-approve). Path-filtered to `terraform/**`. Uses separate `TF_ROLE_ARN` OIDC secret. Backend injected via `-backend-config` flags at init time.
 2. Updated `tasks/todo.md` — new section with AWS manual setup checklist: S3 state bucket commands, DynamoDB lock table command, Terraform IAM role guidance, GitHub repo config table
 3. Committed and pushed: `f21557a`
+
+---
+
+## 2026-03-04
+
+### Prompt
+> docker-compose gap (NFR-019): the README admits compose doesn't include jq-server/jq-worker. Fix this so a reviewer can run a real demo without building locally. Add docker compose up that includes server + worker containers (even if you keep "native build" as an advanced path).
+
+### Actions
+1. Created `config.docker.yaml` — config with docker-internal service names (postgres, redis, redpanda:9092); used for both jq-server and jq-worker in compose
+2. Updated `docker/Dockerfile.server` — builder stage now compiles `jq-ctl` alongside `jq-server`; runtime stage installs `jq-ctl` at `/usr/local/bin/jq-ctl` so `docker exec jq-server jq-ctl ...` works
+3. Updated `docker-compose.yml` — added `jq-server` (build: Dockerfile.server, ports 50051/9090/8080, depends on postgres+redis+redpanda healthy, restart: on-failure) and `jq-worker` (build: Dockerfile.worker, port 9091→9090, depends on jq-server, restart: on-failure); both mount `config.docker.yaml`; prometheus now depends on jq-server+jq-worker instead of backing services; removed `extra_hosts`
+4. Updated `prometheus/prometheus.yml` — scrape targets changed from `host.docker.internal:9090/9091` to `jq-server:9090` and `jq-worker:9090` (container names inside compose network)
+5. Updated `README.md` — new "Quick Start (Docker)" section at top (Docker-only, no toolchain needed); original native build renamed "Quick Start (Native Build — Advanced)"; added services table; removed NFR-019 from Known Gaps table
+6. Updated `tasks/todo.md` with plan and `docs/activity.md` with this entry

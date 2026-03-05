@@ -65,7 +65,41 @@ The scheduler runs every 500 ms, queries `PENDING` jobs ordered by `(priority DE
 
 ---
 
-## Quick Start (Local)
+## Quick Start (Docker)
+
+**Prerequisites:** Docker only. No C++ toolchain required.
+
+```bash
+# 1. Start everything (builds server + worker images on first run, ~5 min)
+docker compose up -d
+
+# 2. Wait for jq-server to finish DB migrations (watch logs until quiet)
+docker compose logs -f jq-server
+
+# 3. Create a queue
+docker exec jq-server jq-ctl --server-addr localhost:50051 \
+    queue create default
+
+# 4. Submit a job
+docker exec jq-server jq-ctl --server-addr localhost:50051 \
+    job submit --queue default --payload '{"command":["echo","hello"]}'
+
+# 5. Check system health
+docker exec jq-server jq-ctl --server-addr localhost:50051 status
+```
+
+Services after `docker compose up`:
+
+| Service | URL |
+|---|---|
+| jq-server gRPC | `localhost:50051` |
+| jq-server health | `http://localhost:8080/healthz` |
+| Grafana | `http://localhost:3000` (admin / admin) |
+| Prometheus | `http://localhost:9095` |
+
+---
+
+## Quick Start (Native Build — Advanced)
 
 **Prerequisites:** Docker, CMake ≥ 3.20, Homebrew LLVM (macOS).
 
@@ -74,18 +108,18 @@ The scheduler runs every 500 ms, queries `PENDING` jobs ordered by `(priority DE
 brew install llvm cmake ninja grpc protobuf libpqxx hiredis librdkafka \
              boost abseil spdlog nlohmann-json googletest yaml-cpp
 
-# 2. Configure build
+# 2. Start only the backing services
+docker compose up -d postgres redis redpanda
+
+# 3. Configure build
 cmake -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-macos.cmake -B build
 
-# 3. Build all binaries
+# 4. Build all binaries
 cmake --build build --parallel
-
-# 4. Start backing services (PostgreSQL, Redis, Redpanda, Prometheus, Grafana)
-docker compose up -d
 
 # 5. Copy and edit config
 cp config.example.yaml config.local.yaml
-# Set db.password to match docker-compose.yml (default: "jq")
+# Passwords match docker-compose defaults (db: jqpassword, redis: none)
 
 # 6. Start the server (runs DB migrations on startup)
 ./build/jq-server --config config.local.yaml
@@ -281,7 +315,6 @@ Note: NFR-001 requires `ghz` (persistent gRPC connection). `jq-ctl` spawns a new
 | FR-004: TTL only catches PENDING jobs (ASSIGNED jobs with no worker don't expire) | Low |
 | FR-047/048: mTLS infrastructure exists but not end-to-end tested | Low |
 | FR-045: No log warning if secrets appear in YAML config file | Low |
-| NFR-019: docker-compose.yml doesn't include jq-server/jq-worker services | Low |
 
 ---
 

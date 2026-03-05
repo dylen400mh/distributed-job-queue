@@ -57,9 +57,59 @@ services:
       retries: 12
 
   # ---------------------------------------------------------------------------
+  # jq-server — control plane (gRPC API + scheduler)
+  # gRPC:    localhost:50051
+  # Metrics: localhost:9090
+  # Health:  localhost:8080
+  # ---------------------------------------------------------------------------
+  jq-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    command: ["--config", "/etc/jq/config.docker.yaml"]
+    volumes:
+      - ./config.docker.yaml:/etc/jq/config.docker.yaml:ro
+    ports:
+      - "50051:50051"
+      - "9090:9090"
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # jq-worker — data plane (executes jobs via fork/exec)
+  # Connects to jq-server:50051 over the compose network.
+  # Metrics: localhost:9091 (mapped from container port 9090)
+  # ---------------------------------------------------------------------------
+  jq-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    command:
+      - "--config"
+      - "/etc/jq/config.docker.yaml"
+      - "--server-addr"
+      - "jq-server:50051"
+      - "--queues"
+      - "default"
+    volumes:
+      - ./config.docker.yaml:/etc/jq/config.docker.yaml:ro
+    ports:
+      - "9091:9090"
+    depends_on:
+      - jq-server
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
   # Prometheus — metrics scraping
   # UI available at http://localhost:9095
-  # Scrapes jq-server (host:9090) and jq-worker (host:9091) via host.docker.internal
+  # Scrapes jq-server and jq-worker by container name over the compose network.
   # ---------------------------------------------------------------------------
   prometheus:
     image: prom/prometheus:latest
@@ -68,12 +118,9 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerts.yaml:/etc/prometheus/alerts.yaml:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
-      - postgres
-      - redis
-      - redpanda
+      - jq-server
+      - jq-worker
 
   # ---------------------------------------------------------------------------
   # Grafana — dashboards
