@@ -88,9 +88,12 @@ void Log(spdlog::level::level_enum level,
         entry[k] = v;
 
     // Serialise and write atomically so concurrent threads don't interleave.
+    // Flushed explicitly: stdout is fully buffered (not line-buffered) once
+    // it's a pipe rather than a TTY, so without this, log lines sit unseen
+    // in the process's buffer for as long as it keeps running.
     const std::string line = entry.dump() + '\n';
     std::lock_guard<std::mutex> lk(g_out_mutex);
-    std::cout << line;
+    std::cout << line << std::flush;
 }
 
 }  // namespace jq::log

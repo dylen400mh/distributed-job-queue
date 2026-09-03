@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <iostream>
 #include <string>
@@ -25,9 +26,11 @@
 static std::atomic<bool> g_shutdown{false};
 static jq::Worker*       g_worker = nullptr;
 
+// Only touches an atomic — Worker::Shutdown() locks a mutex and notifies a
+// condition variable, neither of which is async-signal-safe, so the actual
+// call happens on the shutdown-watcher thread instead of here.
 static void SignalHandler(int /*sig*/) {
     g_shutdown = true;
-    if (g_worker) g_worker->Shutdown();
 }
 
 // ---------------------------------------------------------------------------
@@ -137,11 +140,24 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, SignalHandler);
     std::signal(SIGINT,  SignalHandler);
 
+    // Polls the shutdown flag from ordinary thread context and calls
+    // Worker::Shutdown() there, since the signal handler itself can't
+    // safely do that work.
+    std::thread shutdown_watcher([] {
+        while (!g_shutdown.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (g_worker) g_worker->Shutdown();
+    });
+
     // ---- Worker (blocks until Shutdown()) ----
     jq::Worker worker(flags.server_addr, flags.worker_id, concurrency, queues);
     g_worker = &worker;
     worker.Run();
     g_worker = nullptr;
+
+    g_shutdown = true;
+    shutdown_watcher.join();
 
     LOG_INFO("jq-worker stopped");
     return 0;

@@ -100,8 +100,10 @@ void HealthServer::Start() {
 
 void HealthServer::Stop() {
     if (!running_.exchange(false)) return;
-    // Close the listening socket to unblock accept().
+    // shutdown() before close(): close() alone doesn't reliably unblock a
+    // thread parked in accept() on the same fd on Linux.
     if (listen_fd_ >= 0) {
+        ::shutdown(listen_fd_, SHUT_RDWR);
         ::close(listen_fd_);
         listen_fd_ = -1;
     }

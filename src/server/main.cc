@@ -2,11 +2,13 @@
 // jq-server: gRPC server + scheduler daemon.
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #include "common/config/config.h"
 #include "common/config/flags.h"
@@ -24,9 +26,11 @@
 static std::atomic<bool> g_shutdown{false};
 static jq::GrpcServer*   g_grpc_server = nullptr;
 
+// Only touches an atomic — logging and gRPC's Shutdown() aren't
+// async-signal-safe, so the actual Stop() call happens on the
+// shutdown-watcher thread instead of here.
 static void SignalHandler(int /*sig*/) {
     g_shutdown = true;
-    if (g_grpc_server) g_grpc_server->Stop();
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +157,16 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, SignalHandler);
     std::signal(SIGINT,  SignalHandler);
 
+    // Polls the shutdown flag from ordinary thread context and calls
+    // GrpcServer::Stop() there, since the signal handler itself can't
+    // safely do that work.
+    std::thread shutdown_watcher([] {
+        while (!g_shutdown.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (g_grpc_server) g_grpc_server->Stop();
+    });
+
     // ---- gRPC server (blocks until shutdown) ----
     try {
         jq::GrpcServer grpc_server(cfg, *pool);
@@ -161,9 +175,14 @@ int main(int argc, char** argv) {
         g_grpc_server = nullptr;
     } catch (const std::exception& e) {
         LOG_ERROR("gRPC server error", {{"error", e.what()}});
+        g_shutdown = true;
+        shutdown_watcher.join();
         health.Stop();
         return 1;
     }
+
+    g_shutdown = true;
+    shutdown_watcher.join();
 
     // ---- Graceful shutdown ----
     LOG_INFO("jq-server shutting down");
