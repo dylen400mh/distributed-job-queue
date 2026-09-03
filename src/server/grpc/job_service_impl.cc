@@ -10,6 +10,7 @@
 
 #include "common.pb.h"
 #include "common/logging/logger.h"
+#include "common/metrics/metrics.h"
 
 namespace jq {
 
@@ -132,6 +133,9 @@ grpc::Status JobServiceImpl::CancelJob(grpc::ServerContext*    /*ctx*/,
                             "job state changed concurrently; cannot cancel");
     }
 
+    metrics::JobTotal()
+        .Add({{"queue", job->queue_name}, {"status", "DEAD_LETTERED"}})
+        .Increment();
     LOG_INFO("Job cancelled", {{"job_id", req->job_id()}});
     return grpc::Status::OK;
 }

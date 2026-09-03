@@ -1,93 +1,136 @@
-# Remove Kafka and Kubernetes from the job queue
+# Finish Prometheus/Grafana metrics instrumentation
 
 ## Goal
-Kafka is a write-only, unconsumed event log (Postgres `job_events` already
-durably records every transition in the same transaction) and Kubernetes is
-one of two deployment targets layered on top of Docker Compose (which already
-runs the full stack per NFR-019). Neither is load-bearing. Remove both,
-simplify the AWS/Terraform footprint accordingly, and consolidate the spec
-docs into README.md / CLAUDE.md.
+Of the 10 metrics declared in `src/common/metrics/metrics.h` (FR-040), only 3 are
+actually recorded anywhere in the code (`SchedulerCycleDuration`,
+`SchedulerJobsAssignedTotal`, `RedisOperationDuration`). The other 7 have live
+Grafana panels and — for 4 of them — active alert rules, all of which are
+currently dead: the panels show "No data" forever and the alerts (including
+`NoWorkersOnline`, the most operationally important one) can never fire. Wire
+up the remaining 7.
 
-Confirmed with user:
-- AWS infra (EKS/MSK) is already destroyed — safe to edit Terraform directly, no `terraform destroy` needed.
-- Scope: Kafka + Kubernetes, replacing EKS as the deploy target with a single EC2 instance running Docker Compose (so `deploy.yml` still has something to roll out to instead of becoming build-only). Keep Terraform for RDS/ElastiCache/VPC/ECR.
-- No event-bus replacement for Kafka; `job_events` table is the sole durable event record.
-- Consolidate requirements.md + design-notes.md + tech-stack.md into README.md/CLAUDE.md, then delete the three files.
+**Branch note:** PR #1 (Kafka + Kubernetes/EKS removal) is now merged into
+`main`, so this branch — cut fresh from `main` after that merge — has neither.
+No workaround needed for Kafka lines anymore.
 
 ## Plan
 
-### A. Remove Kafka [DONE]
-- [x] Delete `src/common/kafka/` (kafka_producer.h/.cc, kafka_consumer.h/.cc)
-- [x] `src/common/config/config.h` / `.cc` — remove `KafkaConfig` struct, YAML parsing, env var overrides (`JQ_KAFKA_*`), validation (`kafka.brokers is required`)
-- [x] Remove `IKafkaProducer& kafka` param/member/wiring from:
-  - `JobServiceImpl` (job_service_impl.h/.cc) — drop `PublishEvent`, kafka_.Publish calls
-  - `WorkerServiceImpl` (worker_service_impl.h/.cc)
-  - `AdminServiceImpl` (admin_service_impl.h/.cc) — drop "kafka" component from `GetSystemStatus`
-  - `Scheduler` (scheduler.h/.cc) — drop `kafka_.Publish` calls in `ApplyRetry` etc.
-  - `HealthServer` (health_server.h/.cc) — drop Kafka from `/readyz` check
-  - `GrpcServer` (server.h/.cc) — drop kafka arg threading
-  - `src/server/main.cc` — drop `KafkaProducer` construction, `TestKafka`, `--dry-run` Kafka check, `kafka->Flush` shutdown calls
-- [x] `src/common/metrics/metrics.h` / `.cc` — remove `KafkaPublishErrorsTotal`
-- [x] `CMakeLists.txt` — remove `jq_kafka` target, RDKAFKA pkg-config, all `jq_kafka` links, librdkafka from the toolchain pkgconfig path
-- [x] `vcpkg.json` — remove `librdkafka`, update description
-- [x] `tests/CMakeLists.txt` — remove `kafka_unit_tests` target, `jq_kafka` links from `server_unit_tests`
-- [x] Delete `tests/unit/kafka/`
-- [x] `tests/unit/server/job_service_test.cc`, `admin_service_test.cc` — remove `MockKafkaProducer`, kafka_ member, constructor args, `EXPECT_CALL(kafka, ...)`
-- [x] `tests/unit/config/config_test.cc` — drop stale kafka comment reference
-- [x] `docker-compose.yml` — remove `redpanda` service and its `depends_on` edge from `jq-server`
-- [x] `config.example.yaml`, `config.local.yaml`, `config.docker.yaml` — remove `kafka:` section
-- [x] `prometheus/alerts.yaml` — remove `KafkaPublishErrors` alert
-- [x] `grafana/provisioning/dashboards/jq-dashboard.json` — remove Kafka publish-error panel
-- [x] `prometheus/prometheus.yml` — check/remove any redpanda scrape target
+### 1. `jq_worker_active_count` + `jq_worker_job_concurrency` — event-driven, in `WorkerRegistry`
+In-memory state, no DB cost, so update on every mutation rather than polling.
+- `src/server/scheduler/worker_registry.cc`: add a private `PublishMetrics()` (called
+  while holding `mu_`) that sets `WorkerActiveCount` = `workers_.size()` and
+  `WorkerJobConcurrency{worker_id}` = each worker's `active_job_count`.
+- Call it at the end of `RegisterStream`, `RemoveWorker`, `DecrementActiveCount`,
+  and all three mutating exits of `AssignJob`.
+- On `RemoveWorker`, explicitly `Remove()` that worker's `WorkerJobConcurrency`
+  series (fetch-then-remove) so it doesn't linger as a stale "ghost" gauge —
+  this is the one piece of real polish beyond "just call Set()".
 
-### B. Remove Kubernetes, replace with a single EC2 host
-- [x] Delete `k8s/` directory entirely
-- [x] `terraform/eks.tf` — delete (EKS cluster + node group)
-- [x] `terraform/msk.tf` — delete (in scope since Kafka is going too)
-- [x] `terraform/iam.tf` — remove `eks_cluster` / `eks_node` IAM roles + attachments; remove `EKSDescribe` statement from the GitHub Actions policy; add an `app` EC2 instance role (SSM managed-instance core, ECR read-only, Secrets Manager read on the DB password secret) + instance profile
-- [x] `terraform/security_groups.tf` — remove `eks_control_plane` SG + its cross-reference rules and `msk` SG; rename `eks_nodes` → `app`, scoped to inbound gRPC/health/metrics (50051/8080/9090) from `0.0.0.0/0` (public, like the old NLB path) instead of pod-to-pod self-ingress; repoint the RDS/Redis ingress rules at it
-- [x] `terraform/vpc.tf` — drop `kubernetes.io/...` subnet tags (meaningless without EKS)
-- [x] New `terraform/ec2.tf` — one `aws_instance` (Amazon Linux 2023, public subnet, public IP, the `app` SG + instance profile), `templatefile()` user-data that installs Docker, writes a minimal `config.yaml` + `/opt/jq/docker-compose.yml` pulling `jq-server`/`jq-worker` from ECR (`IMAGE_TAG` env, default `latest`), fetches the DB password from Secrets Manager, and brings the stack up. No SSH — access is via SSM Session Manager only.
-- [x] New `terraform/templates/app_user_data.sh.tftpl`
-- [x] `terraform/variables.tf` — remove `kubernetes_version`, `node_instance_type/min/max/desired`, `kafka_broker_instance_type/count`, `kafka_version`; add `app_instance_type` (default `t3.small`)
-- [x] `terraform/outputs.tf` — remove `eks_cluster_name`, `msk_bootstrap_brokers` outputs; add `app_instance_id` output (consumed by `deploy.yml`); update header comment
-- [x] `.github/workflows/deploy.yml` — replace the "Deploy to EKS" job with a "Deploy to EC2" job: after build-and-push, `aws ssm send-command` (`AWS-RunShellScript`) on `vars.APP_INSTANCE_ID` to set `IMAGE_TAG=sha-$GITHUB_SHA` in `/opt/jq/.env`, `docker compose pull && docker compose up -d`, then poll `ssm get-command-invocation` for success; update header comment (`EKS_CLUSTER_NAME` → `APP_INSTANCE_ID`)
-- [x] `terraform/iam.tf` — swap the GitHub Actions policy's `EKSDescribe` statement for an `SSMDeploy` statement scoped to the app instance ARN + the `AWS-RunShellScript` document ARN
-- [x] `.github/workflows/terraform.yml` — update comment mentioning "VPCs, EKS, RDS, MSK, IAM"
-- [x] `terraform validate` / `terraform fmt -check` locally (provider already cached under `terraform/.terraform`) — no `plan`/`apply` against real AWS
+### 2. `jq_job_processing_duration_seconds` — single call site
+- `src/server/grpc/worker_service_impl.cc::ReportResult`: after `StoreJobResult`
+  succeeds (both success and failure branches), if `job->started_at` is set,
+  observe `now - started_at` into `JobProcessingDuration{queue}`.
 
-### C. Consolidate docs
-- [x] Fold the FR/NFR requirements list (minus Kafka/K8s-specific items: FR-034/036-038/042/045/046-partial, NFR-013/019/022 wording, C-002/C-003) into a condensed "Requirements" section in README.md — keep IDs since code comments cite them
-- [x] Fold design-notes.md rationale (scheduler loop detail, graceful shutdown sequence, config schema, testing strategy) into CLAUDE.md's existing "Architecture" section
-- [x] Fold tech-stack.md's dependency/directory detail into CLAUDE.md's existing structure section + README's stack table
-- [x] Delete `requirements.md`, `design-notes.md`, `tech-stack.md`
-- [x] Update README.md: intro paragraph, Highlights table, Architecture diagram, Tech Stack table, Directory Structure, "Deployment (AWS/EKS)" section → rewrite for RDS/ElastiCache/ECR/single EC2 host (SSM-based deploy, no kubectl)
-- [x] Update CLAUDE.md: Architecture section (drop Kafka bullet), Directory Structure (drop `kafka/`, `k8s/`), Reference Documents section (docs no longer exist)
-- [x] Delete `prompts.md` (build-prompt log for the original from-scratch build; no longer needed)
-- [x] Leave `docs/performance.md` and `docs/test-results.md` untouched — historical measurement records of the prior EKS deployment, not current-state specs
+### 3. `jq_job_total{queue,status}` — increment at every real transition to a terminal-for-the-attempt status
+Matches exactly what the dashboard/alerts already filter for (`DONE|FAILED|DEAD_LETTERED`).
+- `WorkerServiceImpl::ReportResult` — `DONE` on success; `FAILED` on every failure;
+  `DEAD_LETTERED` on the exhausted-retries branch
+- `Scheduler::ApplyRetry` (`scheduler.cc`) — `DEAD_LETTERED` branch. Needs `queue_name`
+  threaded in as a new parameter (its two callers — `HeartbeatMonitor` and
+  `WorkerServiceImpl::ReportResult`'s own inline dup logic — both already have a
+  `JobRow` with `.queue_name` in scope)
+- `Scheduler::RunLoop`'s TTL-expiry block — `DEAD_LETTERED`
+- `JobServiceImpl::CancelJob` — `DEAD_LETTERED` (reason `CANCELLED`)
 
-### D. Verify
-- [x] `cmake -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-macos.cmake -B build && cmake --build build --parallel`
-- [x] `./build/tests/unit_tests` (or per-target tests per tests/CMakeLists.txt)
-- [x] `docker compose config` sanity check (no dangling redpanda refs)
-- [x] `grep -rn -i kafka` / `grep -rn -i "kubernetes\|k8s\|eks"` across the repo — confirm only historical docs (performance.md/test-results.md) remain
+### 4. `jq_job_queue_depth{queue,status}` — periodic snapshot, folded into the existing 10s `HeartbeatMonitor` loop
+No new thread, no new SQL — `QueueRepository::GetQueueStats()` already computes
+exactly this (`pending_count`, `running_count`, `failed_count`, `done_count`,
+`dead_letter_count`) for `jq-ctl queue stats`.
+- `src/server/scheduler/scheduler.cc::HeartbeatMonitor`: add a local
+  `db::QueueRepository queue_repo(pool_);`, each cycle iterate
+  `queue_repo.ListQueues()` and `Set()` the gauge for all 5 statuses per queue.
+- **Known limitation, accepted rather than engineered around:** if a queue is
+  deleted, its gauge series goes stale rather than disappearing. Queue deletion
+  is a rare, explicit operator action — not worth the extra plumbing into
+  `AdminServiceImpl::DeleteQueue` to clean it up.
 
-### E. Ship
-- [x] New branch `remove-kafka-k8s`
-- [x] Logical commits per phase (A/B/C)
-- [x] Append activity log entry to `docs/activity.md`
-- [x] Push branch, open PR to `main` — https://github.com/dylen400mh/distributed-job-queue/pull/1
+### 5. `jq_grpc_request_duration_seconds{method,status_code}` — new gRPC server interceptor
+The one genuinely new piece — nothing in the codebase does this yet.
+- New `src/server/grpc/metrics_interceptor.h/.cc`: a
+  `grpc::experimental::Interceptor` + `ServerInterceptorFactoryInterface` pair.
+  Captures the method name from `experimental::ServerRpcInfo::method()` at
+  construction, times from `PRE_SEND_INITIAL_METADATA` to `PRE_SEND_STATUS`,
+  reads the status code off `GetSendStatus()`.
+- `src/server/grpc/server.cc::Start()`: register it via
+  `builder.experimental().SetInterceptorCreators(...)` before `BuildAndStart()`.
+
+### 6. `jq_db_query_duration_seconds{query_name}` — RAII timer across all repository methods
+Mirrors the `OpTimer` pattern already used in `redis_client.cc`, generalized so
+it's not duplicated three times.
+- `src/common/metrics/metrics.h`: add a small reusable `ScopedDuration` RAII
+  (histogram ref + start time, observes on destruction).
+- One-line instantiation at the top of all 19 repository methods across
+  `job_repository.cc` (9), `worker_repository.cc` (6), `queue_repository.cc` (4),
+  each labeled with its own method name as `query_name`.
+
+## Verification
+- [x] Full build (`cmake --build build --parallel`)
+- [x] `ctest` — same baseline as before (only `db_unit_tests` fails, no local Postgres)
+- [x] Manually sanity-checked: started Postgres/Redis via compose, ran `jq-server` +
+      `jq-worker` natively, submitted a success job, a job that fails and retries,
+      and a job that gets cancelled mid-flight. Curled `/metrics` on both binaries —
+      all 10 declared families now appear on `jq-server:9090` with real values;
+      `jq-worker:9091` correctly has none of them (all FR-040 metrics are
+      server-side by design).
+- [x] `docker compose config` — clean
+
+## Ship
+- [x] Branch `finish-metrics-instrumentation` off `main` (post PR #1 merge)
+- [x] Commit(s), activity log entry
+- [ ] Push, open PR to `main`
 
 ## Review
 
-**Kafka** was write-only and unconsumed — `jq-server` published lifecycle events that nothing ever read (`KafkaConsumer` existed in the source tree but was never instantiated), and every event it carried was already durably written to `job_events` in the same DB transaction. Removed entirely: `src/common/kafka/`, the `IKafkaProducer` wiring through every server-side service and the scheduler, the CMake target + librdkafka dependency, the Prometheus alert + Grafana panel, the Redpanda dev service, and all `kafka_unit_tests`/mock plumbing in tests.
+All 7 unwired metrics are now recorded, verified live against a real
+Postgres+Redis+jq-server+jq-worker run (not just build-green):
 
-**Kubernetes/EKS** was one of two deployment targets layered on top of Docker Compose, which already runs the full stack standalone (NFR-019). Removed `k8s/` and the EKS/MSK Terraform. Per the user's choice, replaced the EKS deploy target with a single EC2 host (`terraform/ec2.tf` + `templates/app_user_data.sh.tftpl`) running the same Docker Compose stack, managed via SSM (no SSH). `deploy.yml` now rolls out new images via `aws ssm send-command` instead of `kubectl set image`. RDS, ElastiCache, ECR, and the VPC are unchanged.
+- `jq_worker_active_count` / `jq_worker_job_concurrency` — event-driven from
+  `WorkerRegistry`'s existing mutation points; `RemoveWorker` explicitly drops
+  the departed worker's concurrency series instead of leaving a stale gauge.
+- `jq_job_total{queue,status}` — increments at all 4 real call sites
+  (`ReportResult` DONE/FAILED/DEAD_LETTERED, `ApplyRetry`'s dead-letter branch,
+  TTL expiry, `CancelJob`). Confirmed all three statuses appear correctly via
+  a success run, a failing job, and a cancel.
+- `jq_job_queue_depth{queue,status}` — piggybacks on the existing 10s
+  `HeartbeatMonitor` loop, reusing `QueueRepository::GetQueueStats()` (already
+  built for `jq-ctl queue stats`) rather than new SQL.
+- `jq_grpc_request_duration_seconds{method,status_code}` — new
+  `MetricsInterceptor`/`MetricsInterceptorFactory` pair registered via
+  `builder.experimental().SetInterceptorCreators()`. First real interceptor
+  usage in this codebase.
+- `jq_db_query_duration_seconds{query_name}` — new `metrics::ScopedDuration`
+  RAII + `DbQueryTimer()` helper, put to use with 23 one-line insertions across
+  all three repositories (finally using the `kDurationBuckets` constant that
+  was declared but dead in the original scaffolding).
+- `jq_job_processing_duration_seconds{queue}` — **caught and fixed a real bug
+  during manual testing, not just wiring it up.** The plan's original approach
+  (observe from `job->started_at` fetched before the RUNNING transition) never
+  fires: there's no separate "job started" RPC in this system, so every job is
+  *always* auto-advanced ASSIGNED→RUNNING inside `ReportResult` itself, meaning
+  the pre-fetched `job` row's `started_at` is *always* 0 at observation time.
+  Fixed by tracking the actual started-at moment locally (the DB write we just
+  did) instead of relying on the stale in-memory row. Confirmed non-zero
+  histogram counts after the fix.
 
-**Docs** — `requirements.md`, `design-notes.md`, and `tech-stack.md` were folded into `README.md` (condensed Requirements section, updated architecture/tech-stack/deployment) and `CLAUDE.md` (design rationale, graceful shutdown, testing strategy), then deleted along with `prompts.md` (superseded build-prompt log). Swept the rest of the repo for leftover references the main phases missed: `ci.yml`, `Makefile`, `admin_service.proto`, `.dockerignore`, and two code comments pointing at the now-deleted `design-notes.md`.
+**Known, accepted limitations** (stated in-code, not silent):
+- `jq_job_queue_depth` goes stale for a deleted queue rather than disappearing
+  — queue deletion is rare and explicit; not worth touching `DeleteQueue` for.
+- `started_at`/`completed_at` have whole-second granularity (existing schema),
+  so sub-second jobs report ~0 duration — best available precision without a
+  schema change, out of scope here.
+- Observed but **not fixed** (pre-existing, unrelated to metrics): cancelling
+  a job already dispatched to a worker updates the DB but doesn't tell
+  `WorkerRegistry` to decrement that worker's active count — `jq_worker_job_concurrency`
+  faithfully mirrors this existing staleness rather than papering over it.
 
-**Files changed:** 3 commits, ~60 files. Full build (`cmake --build build --parallel`) succeeds; `ctest` passes everything except `db_unit_tests`, which fails only because no local Postgres is running (pre-existing, unrelated to this change — confirmed via `docker ps`). `terraform validate`/`fmt` pass against the cached AWS provider (no real AWS calls made — infra was already destroyed per the user). `docker compose config` validates.
-
-**Not done / explicitly out of scope:** no `terraform plan`/`apply` against real AWS (nothing to compare against — infra already destroyed); no re-benchmark of the historical throughput/latency numbers in `docs/performance.md`/`docs/test-results.md` (left as dated records, per the user's decision to leave them untouched); the EC2 replacement is a new, never-deployed code path — worth a real `terraform apply` + smoke test before relying on it for a live deploy.
-
-**Suggested next steps:** run `terraform plan` against a real AWS account to sanity-check the EC2/IAM/SG changes before merging to a branch anyone deploys from; consider adding a CloudWatch alarm or simple uptime check for the single EC2 host now that there's no HPA/PDB safety net; if the team ever needs true multi-instance `jq-server`/`jq-worker` scaling again, an ASG behind the existing `app` security group would be the natural next step rather than reintroducing Kubernetes.
+**Files touched:** 13 modified + 2 new (`metrics_interceptor.h/.cc`), 1 commit.

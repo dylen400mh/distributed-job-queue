@@ -4,8 +4,22 @@
 #include <functional>
 
 #include "common/logging/logger.h"
+#include "common/metrics/metrics.h"
 
 namespace jq {
+
+// ---------------------------------------------------------------------------
+// PublishMetrics — caller must hold mu_.
+// ---------------------------------------------------------------------------
+
+void WorkerRegistry::PublishMetrics() {
+    metrics::WorkerActiveCount().Add({}).Set(static_cast<double>(workers_.size()));
+    for (const auto& [wid, info] : workers_) {
+        metrics::WorkerJobConcurrency()
+            .Add({{"worker_id", wid}})
+            .Set(static_cast<double>(info.active_job_count));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // RegisterStream
@@ -30,6 +44,8 @@ std::shared_ptr<StreamHandle> WorkerRegistry::RegisterStream(
     // Preserve active_job_count across stream reconnects.
     entry.stream      = handle;
 
+    PublishMetrics();
+
     LOG_INFO("Worker stream registered",
              {{"worker_id", worker_id}, {"concurrency", concurrency}});
 
@@ -43,6 +59,11 @@ std::shared_ptr<StreamHandle> WorkerRegistry::RegisterStream(
 void WorkerRegistry::RemoveWorker(const std::string& worker_id) {
     std::lock_guard<std::mutex> lock(mu_);
     workers_.erase(worker_id);
+    // Drop the per-worker concurrency series so it doesn't linger as a stale
+    // gauge after the worker is gone.
+    metrics::WorkerJobConcurrency().Remove(
+        &metrics::WorkerJobConcurrency().Add({{"worker_id", worker_id}}));
+    PublishMetrics();
     LOG_INFO("Worker removed from registry", {{"worker_id", worker_id}});
 }
 
@@ -56,6 +77,7 @@ void WorkerRegistry::DecrementActiveCount(const std::string& worker_id) {
     if (it != workers_.end() && it->second.active_job_count > 0) {
         --it->second.active_job_count;
     }
+    PublishMetrics();
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +106,7 @@ bool WorkerRegistry::AssignJob(const std::string&          job_id,
             ++info.active_job_count;
             break;
         }
+        if (chosen_handle) PublishMetrics();
     }
 
     if (!chosen_handle) {
@@ -99,6 +122,7 @@ bool WorkerRegistry::AssignJob(const std::string&          job_id,
         if (it != workers_.end() && it->second.active_job_count > 0) {
             --it->second.active_job_count;
         }
+        PublishMetrics();
         return false;
     }
 
@@ -117,6 +141,7 @@ bool WorkerRegistry::AssignJob(const std::string&          job_id,
         if (it != workers_.end() && it->second.active_job_count > 0) {
             --it->second.active_job_count;
         }
+        PublishMetrics();
         return false;
     }
 

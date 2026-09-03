@@ -64,6 +64,7 @@ private:
     // Apply retry logic to a FAILED job.
     void ApplyRetry(db::IJobRepository& job_repo,
                     const std::string&  job_id,
+                    const std::string&  queue_name,
                     int                 retry_count,
                     int                 max_retries);
 

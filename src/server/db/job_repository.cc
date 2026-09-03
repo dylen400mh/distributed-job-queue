@@ -8,6 +8,7 @@
 #include <pqxx/pqxx>
 
 #include "common/logging/logger.h"
+#include "common/metrics/metrics.h"
 
 namespace jq::db {
 
@@ -88,6 +89,7 @@ constexpr const char* kJobSelect =
 // ---------------------------------------------------------------------------
 
 bool JobRepository::QueueExists(const std::string& queue_name) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("QueueExists"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -107,6 +109,7 @@ bool JobRepository::QueueExists(const std::string& queue_name) {
 // ---------------------------------------------------------------------------
 
 int JobRepository::GetQueueMaxRetries(const std::string& queue_name) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("GetQueueMaxRetries"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -130,6 +133,7 @@ std::string JobRepository::InsertJob(const std::string&         queue_name,
                                       const std::vector<uint8_t>& payload,
                                       int                         priority,
                                       int                         max_retries) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("InsertJob"));
     auto c = Conn();
     pqxx::work txn(c.get());
 
@@ -158,6 +162,7 @@ std::string JobRepository::InsertJob(const std::string&         queue_name,
 // ---------------------------------------------------------------------------
 
 std::optional<JobRow> JobRepository::FindJobById(const std::string& job_id) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("FindJobById"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -183,6 +188,7 @@ bool JobRepository::TransitionJobStatus(const std::string& job_id,
                                          const std::string& new_status,
                                          const std::string& reason,
                                          const std::string& worker_id) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("TransitionJobStatus"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -239,6 +245,7 @@ bool JobRepository::TransitionJobStatus(const std::string& job_id,
 
 bool JobRepository::ResetJobForRetry(const std::string& job_id,
                                       const std::string& expected_from_status) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("ResetJobForRetry"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -279,6 +286,7 @@ std::vector<JobRow> JobRepository::ListJobs(const std::string& queue_name,
                                              const std::string& status_filter,
                                              int                limit,
                                              int                offset) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("ListJobs"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -314,6 +322,7 @@ std::vector<JobRow> JobRepository::ListJobs(const std::string& queue_name,
 // ---------------------------------------------------------------------------
 
 std::vector<JobEventRow> JobRepository::ListJobEvents(const std::string& job_id) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("ListJobEvents"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -357,6 +366,7 @@ std::vector<JobEventRow> JobRepository::ListJobEvents(const std::string& job_id)
 // ---------------------------------------------------------------------------
 
 std::vector<JobRow> JobRepository::FetchPendingBatch(int batch_size) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("FetchPendingBatch"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -384,6 +394,7 @@ std::vector<JobRow> JobRepository::FetchPendingBatch(int batch_size) {
 bool JobRepository::SetJobRetry(const std::string& job_id,
                                  int                new_retry_count,
                                  int64_t            not_before_epoch) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("SetJobRetry"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -421,6 +432,7 @@ bool JobRepository::SetJobRetry(const std::string& job_id,
 // ---------------------------------------------------------------------------
 
 std::vector<JobRow> JobRepository::FetchExpiredTtlJobs() {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("FetchExpiredTtlJobs"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -457,6 +469,7 @@ std::vector<JobRow> JobRepository::FetchExpiredTtlJobs() {
 // ---------------------------------------------------------------------------
 
 std::vector<JobRow> JobRepository::FetchJobsForWorker(const std::string& worker_id) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("FetchJobsForWorker"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -485,6 +498,7 @@ bool JobRepository::StoreJobResult(const std::string&          job_id,
                                     const std::vector<uint8_t>& result,
                                     const std::string&          error_message,
                                     const std::string&          worker_id) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("StoreJobResult"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());

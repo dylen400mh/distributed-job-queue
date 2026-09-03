@@ -7,11 +7,22 @@
 #include <vector>
 
 #include <grpcpp/grpcpp.h>
+#include <prometheus/histogram.h>
 
 #include "common/logging/logger.h"
+#include "common/metrics/metrics.h"
 #include "server/scheduler/scheduler.h"
 
 namespace jq {
+
+namespace {
+
+// Job durations span sub-second subprocess calls to long-running work.
+const prometheus::Histogram::BucketBoundaries kJobDurationBuckets = {
+    0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600
+};
+
+}  // namespace
 
 WorkerServiceImpl::WorkerServiceImpl(db::IJobRepository&    job_repo,
                                      db::IWorkerRepository& worker_repo,
@@ -150,10 +161,17 @@ grpc::Status WorkerServiceImpl::ReportResult(grpc::ServerContext*       /*ctx*/,
     }
     // If job is still ASSIGNED (worker received it but hasn't transitioned yet),
     // auto-advance to RUNNING now so StoreJobResult can accept the final status.
+    // There's no separate "job started" RPC, so this is the only place a job
+    // is ever transitioned to RUNNING — job->started_at (fetched above, before
+    // this call) is therefore always 0 here and can't be used directly; track
+    // the moment we set it instead.
+    int64_t started_at = job->started_at;
     if (job->status == "ASSIGNED") {
         try {
             job_repo_.TransitionJobStatus(
                 req->job_id(), "ASSIGNED", "RUNNING", "STARTED", req->worker_id());
+            started_at = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
         } catch (const std::exception& e) {
             LOG_ERROR("ReportResult: ASSIGNED→RUNNING failed",
                       {{"job_id", req->job_id()}, {"error", e.what()}});
@@ -186,9 +204,22 @@ grpc::Status WorkerServiceImpl::ReportResult(grpc::ServerContext*       /*ctx*/,
     // Decrement the worker's active count in the registry.
     registry_.DecrementActiveCount(req->worker_id());
 
+    // started_at has whole-second granularity (stored/derived as epoch
+    // seconds), so sub-second jobs observe as ~0 — the best available
+    // precision without a schema change.
+    const int64_t completion_epoch = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    if (started_at > 0) {
+        metrics::JobProcessingDuration()
+            .Add({{"queue", job->queue_name}}, kJobDurationBuckets)
+            .Observe(static_cast<double>(completion_epoch - started_at));
+    }
+
     if (req->success()) {
+        metrics::JobTotal().Add({{"queue", job->queue_name}, {"status", "DONE"}}).Increment();
         LOG_INFO("Job completed", {{"job_id", req->job_id()}});
     } else {
+        metrics::JobTotal().Add({{"queue", job->queue_name}, {"status", "FAILED"}}).Increment();
         // Failure — apply retry logic.
         // job->retry_count is the count *before* this attempt.
         if (job->retry_count < job->max_retries) {
@@ -219,6 +250,9 @@ grpc::Status WorkerServiceImpl::ReportResult(grpc::ServerContext*       /*ctx*/,
                 job_repo_.TransitionJobStatus(
                     req->job_id(), "FAILED", "DEAD_LETTERED", "MAX_RETRIES_EXCEEDED",
                     req->worker_id());
+                metrics::JobTotal()
+                    .Add({{"queue", job->queue_name}, {"status", "DEAD_LETTERED"}})
+                    .Increment();
                 LOG_INFO("Job dead-lettered", {{"job_id", req->job_id()}});
             } catch (const std::exception& e) {
                 LOG_ERROR("Dead-letter transition failed",

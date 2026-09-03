@@ -91,6 +91,10 @@ public:
     std::vector<WorkerInfo> GetWorkerStats();
 
 private:
+    // Publish jq_worker_active_count and jq_worker_job_concurrency from the
+    // current contents of workers_. Caller must hold mu_.
+    void PublishMetrics();
+
     std::mutex                                  mu_;
     std::unordered_map<std::string, WorkerInfo> workers_;  // keyed by worker_id
 };
