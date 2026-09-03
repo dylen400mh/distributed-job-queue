@@ -26,6 +26,11 @@ output "app_instance_id" {
   value       = aws_instance.app.id
 }
 
+output "app_public_ip" {
+  description = "Public IP of the app host — use to reach jq-server's gRPC/health/metrics ports"
+  value       = aws_instance.app.public_ip
+}
+
 output "github_actions_role_arn" {
   description = "IAM role ARN for GitHub Actions OIDC — set as GitHub Secret AWS_ROLE_ARN"
   value       = aws_iam_role.github_actions.arn

@@ -67,7 +67,6 @@ jobs:
             protobuf-compiler-grpc \
             libpqxx-dev \
             libhiredis-dev \
-            librdkafka-dev \
             libboost-filesystem-dev \
             libboost-dev \
             libabsl-dev \
@@ -104,7 +103,6 @@ jobs:
         run: |
           cmake --build build --parallel --target \
             config_unit_tests \
-            kafka_unit_tests \
             redis_unit_tests \
             scheduler_unit_tests \
             server_unit_tests
@@ -112,7 +110,6 @@ jobs:
       - name: Run unit tests
         run: |
           ./build/tests/config_unit_tests
-          ./build/tests/kafka_unit_tests
           ./build/tests/redis_unit_tests
           ./build/tests/scheduler_unit_tests
           ./build/tests/server_unit_tests

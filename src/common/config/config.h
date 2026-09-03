@@ -6,7 +6,7 @@
 namespace jq {
 
 // ---------------------------------------------------------------------------
-// Config sub-structs — mirror the config.yaml layout from design-notes.md
+// Config sub-structs — mirror the config.yaml layout (see config.example.yaml)
 // ---------------------------------------------------------------------------
 
 struct GrpcTlsConfig {

@@ -60,7 +60,7 @@ void GrpcServer::Stop() {
     if (!server_) return;
     LOG_INFO("gRPC server shutting down");
     scheduler_.Stop();
-    // Give in-flight RPCs up to 30 s to complete (design-notes.md §Graceful Shutdown).
+    // Give in-flight RPCs up to 30 s to complete (see CLAUDE.md §Graceful shutdown).
     auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(30);
     server_->Shutdown(deadline);
 }

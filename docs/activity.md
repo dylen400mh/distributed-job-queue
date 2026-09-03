@@ -326,3 +326,26 @@ Required GitHub configuration documented in `deploy.yml` header:
 4. Updated `prometheus/prometheus.yml` — scrape targets changed from `host.docker.internal:9090/9091` to `jq-server:9090` and `jq-worker:9090` (container names inside compose network)
 5. Updated `README.md` — new "Quick Start (Docker)" section at top (Docker-only, no toolchain needed); original native build renamed "Quick Start (Native Build — Advanced)"; added services table; removed NFR-019 from Known Gaps table
 6. Updated `tasks/todo.md` with plan and `docs/activity.md` with this entry
+
+---
+
+## 2026-09-03
+
+### Prompt
+> I'd like you to refactor the job queue by analyzing whether kafka, kubernetes, and other components are actually necessary for this project. If they're not, I'd like a plan and implementation to remove them. Any changes you make should be done on a new branch and you should open a PR to merge to main when done.
+> Also get rid of prompts.md
+> also update design-notes.md. make sure ALL md files are up to date and deleted if needed, otherwise updated
+
+### Analysis
+- Kafka: write-only from `jq-server` (job lifecycle events published, never consumed — `KafkaConsumer` existed but was never instantiated anywhere). Every event it carried was already durably written to `job_events` in the same DB transaction. Confirmed dead weight.
+- Kubernetes/EKS: one of two deployment targets layered on top of Docker Compose, which already runs the full stack standalone (NFR-019). Confirmed with the user that the live AWS infra (EKS/MSK) was already destroyed, so editing Terraform directly (no `terraform destroy` needed) was safe.
+- User chose to replace the EKS deploy target with a single EC2 host running Docker Compose (SSM-managed, no SSH) rather than going fully local-only, so `deploy.yml` still has something to roll out to.
+
+### Actions
+1. Wrote plan to `tasks/todo.md`, confirmed scope with the user via AskUserQuestion (AWS infra state, removal scope, event-bus replacement, docs handling)
+2. Branch `remove-kafka-k8s`
+3. **Kafka removal:** deleted `src/common/kafka/`; removed `KafkaConfig` from `config.h`/`.cc`; stripped `IKafkaProducer` from `JobServiceImpl`/`WorkerServiceImpl`/`AdminServiceImpl`/`Scheduler`/`HealthServer`/`GrpcServer`/`main.cc`; removed `KafkaPublishErrorsTotal` metric; removed `jq_kafka` CMake target + librdkafka dep (`CMakeLists.txt`, `vcpkg.json`, `tests/CMakeLists.txt`, `.github/workflows/ci.yml`, both Dockerfiles); deleted `tests/unit/kafka/`; removed `MockKafkaProducer` from `job_service_test.cc`/`admin_service_test.cc`; removed `redpanda` from `docker-compose.yml`/`Makefile`; removed `kafka:` config sections; removed Kafka alert + Grafana panel
+4. **Kubernetes removal:** deleted `k8s/`, `terraform/eks.tf`, `terraform/msk.tf`; added `terraform/ec2.tf` + `terraform/templates/app_user_data.sh.tftpl` (single EC2 host, SSM-managed instance role, Docker Compose bootstrap pulling from ECR, DB password fetched from Secrets Manager at boot); renamed the `eks_nodes` security group to `app` and repointed RDS/Redis ingress at it; rewrote `deploy.yml`'s deploy job to roll out via `aws ssm send-command` instead of `kubectl`; swapped the GitHub Actions IAM policy's `EKSDescribe` statement for `SSMDeploy`; validated with `terraform validate`/`fmt` (provider already cached locally, no real AWS calls)
+5. **Docs consolidation:** folded `requirements.md` into a new condensed "Requirements" section in `README.md`; folded `design-notes.md` rationale (why 3 binaries, why long-running workers, why gRPC, why Redis for locks, graceful shutdown sequence, testing strategy) into `CLAUDE.md`; folded `tech-stack.md` into `CLAUDE.md`'s directory structure + `README.md`'s stack table; deleted `requirements.md`, `design-notes.md`, `tech-stack.md`, `prompts.md`; rewrote README's Deployment section for the EC2/SSM flow; fixed dangling doc-reference code comments (`config.h`, `server.cc`); added brief historical-context notes to `docs/performance.md`/`docs/test-results.md` (left their measured numbers untouched — from the prior EKS deployment, not re-benchmarked)
+6. Verified: full `cmake --build` succeeds; `ctest` passes everything except `db_unit_tests` (pre-existing — needs a live Postgres, unrelated to this change); `docker compose config` validates; repo-wide grep for `kafka`/`kubernetes`/`k8s`/`eks` turns up only intentional historical/summary mentions
+7. Committed in two logical commits (Kafka removal, K8s→EC2 replacement); this doc consolidation + PR follow
