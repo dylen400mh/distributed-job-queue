@@ -76,7 +76,7 @@ Confirmed with user:
 - [x] New branch `remove-kafka-k8s`
 - [x] Logical commits per phase (A/B/C)
 - [x] Append activity log entry to `docs/activity.md`
-- [ ] Push branch, open PR to `main`
+- [x] Push branch, open PR to `main` — https://github.com/dylen400mh/distributed-job-queue/pull/1
 
 ## Review
 
