@@ -103,6 +103,10 @@ prometheus::Family<prometheus::Histogram>& DbQueryDuration() {
     return family;
 }
 
+prometheus::Histogram& DbQueryTimer(const std::string& query_name) {
+    return DbQueryDuration().Add({{"query_name", query_name}}, kDurationBuckets);
+}
+
 prometheus::Family<prometheus::Histogram>& RedisOperationDuration() {
     static auto& family = prometheus::BuildHistogram()
         .Name("jq_redis_operation_duration_seconds")

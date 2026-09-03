@@ -1,13 +1,16 @@
 #include "server/grpc/server.h"
 
 #include <chrono>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/security/server_credentials.h>
 
 #include "common/logging/logger.h"
+#include "server/grpc/metrics_interceptor.h"
 
 namespace jq {
 
@@ -42,6 +45,11 @@ void GrpcServer::Start() {
     builder.RegisterService(&job_svc_);
     builder.RegisterService(&worker_svc_);
     builder.RegisterService(&admin_svc_);
+
+    std::vector<std::unique_ptr<grpc::experimental::ServerInterceptorFactoryInterface>>
+        interceptor_creators;
+    interceptor_creators.push_back(std::make_unique<MetricsInterceptorFactory>());
+    builder.experimental().SetInterceptorCreators(std::move(interceptor_creators));
 
     server_ = builder.BuildAndStart();
     if (!server_) {

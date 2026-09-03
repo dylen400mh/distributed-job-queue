@@ -197,7 +197,7 @@ add_library(jq_server_db STATIC
     src/server/db/queue_repository.cc
 )
 target_include_directories(jq_server_db PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(jq_server_db PUBLIC jq_db jq_log PkgConfig::LIBPQXX)
+target_link_libraries(jq_server_db PUBLIC jq_db jq_log jq_metrics PkgConfig::LIBPQXX)
 
 # ---------------------------------------------------------------------------
 # jq_server_scheduler — WorkerRegistry + Scheduler loop
@@ -227,6 +227,7 @@ add_library(jq_server_grpc STATIC
     src/server/grpc/job_service_impl.cc
     src/server/grpc/worker_service_impl.cc
     src/server/grpc/admin_service_impl.cc
+    src/server/grpc/metrics_interceptor.cc
     src/server/grpc/server.cc
 )
 target_include_directories(jq_server_grpc PUBLIC

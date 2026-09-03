@@ -6,6 +6,7 @@
 #include <pqxx/pqxx>
 
 #include "common/logging/logger.h"
+#include "common/metrics/metrics.h"
 
 namespace jq::db {
 
@@ -42,6 +43,7 @@ constexpr const char* kWorkerSelect =
 std::string WorkerRepository::UpsertWorker(const std::string& worker_id,
                                             const std::string& hostname,
                                             int                concurrency) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("UpsertWorker"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -85,6 +87,7 @@ std::string WorkerRepository::UpsertWorker(const std::string& worker_id,
 // ---------------------------------------------------------------------------
 
 std::optional<WorkerRow> WorkerRepository::FindWorkerById(const std::string& worker_id) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("FindWorkerById"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -106,6 +109,7 @@ std::optional<WorkerRow> WorkerRepository::FindWorkerById(const std::string& wor
 // ---------------------------------------------------------------------------
 
 bool WorkerRepository::UpdateWorkerHeartbeat(const std::string& worker_id) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("UpdateWorkerHeartbeat"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -128,6 +132,7 @@ bool WorkerRepository::UpdateWorkerHeartbeat(const std::string& worker_id) {
 
 void WorkerRepository::SetWorkerStatus(const std::string& worker_id,
                                         const std::string& status) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("SetWorkerStatus"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -148,6 +153,7 @@ void WorkerRepository::SetWorkerStatus(const std::string& worker_id,
 // ---------------------------------------------------------------------------
 
 std::vector<WorkerRow> WorkerRepository::ListWorkers() {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("ListWorkers"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -170,6 +176,7 @@ std::vector<WorkerRow> WorkerRepository::ListWorkers() {
 // ---------------------------------------------------------------------------
 
 std::vector<WorkerRow> WorkerRepository::FetchStaleWorkers(int timeout_s) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("FetchStaleWorkers"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());

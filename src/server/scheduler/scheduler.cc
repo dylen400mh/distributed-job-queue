@@ -14,6 +14,7 @@
 #include <prometheus/histogram.h>
 #include "common/redis/redis_client.h"
 #include "server/db/job_repository.h"
+#include "server/db/queue_repository.h"
 #include "server/db/worker_repository.h"
 
 namespace jq {
@@ -153,6 +154,9 @@ void Scheduler::RunLoop() {
                     bool dead = job_repo.TransitionJobStatus(
                         job.job_id, "PENDING", "DEAD_LETTERED", "TTL_EXPIRED");
                     if (dead) {
+                        metrics::JobTotal()
+                            .Add({{"queue", job.queue_name}, {"status", "DEAD_LETTERED"}})
+                            .Increment();
                         LOG_INFO("Job TTL expired",
                                  {{"job_id", job.job_id}, {"queue", job.queue_name}});
                     }
@@ -191,6 +195,7 @@ void Scheduler::RunLoop() {
 void Scheduler::HeartbeatMonitor() {
     db::JobRepository    job_repo(pool_);
     db::WorkerRepository worker_repo(pool_);
+    db::QueueRepository  queue_repo(pool_);
 
     while (running_) {
         // Run every 10 seconds.
@@ -198,6 +203,29 @@ void Scheduler::HeartbeatMonitor() {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
         if (!running_) break;
+
+        // Snapshot jq_job_queue_depth from the same repository query jq-ctl
+        // queue stats already uses. Piggybacks on this 10s loop rather than a
+        // dedicated thread; a deleted queue's series simply goes stale rather
+        // than being cleaned up (rare, explicit operator action).
+        try {
+            for (const auto& q : queue_repo.ListQueues()) {
+                auto stats = queue_repo.GetQueueStats(q.name);
+                if (!stats) continue;
+                metrics::JobQueueDepth().Add({{"queue", q.name}, {"status", "PENDING"}})
+                    .Set(static_cast<double>(stats->pending_count));
+                metrics::JobQueueDepth().Add({{"queue", q.name}, {"status", "RUNNING"}})
+                    .Set(static_cast<double>(stats->running_count));
+                metrics::JobQueueDepth().Add({{"queue", q.name}, {"status", "FAILED"}})
+                    .Set(static_cast<double>(stats->failed_count));
+                metrics::JobQueueDepth().Add({{"queue", q.name}, {"status", "DONE"}})
+                    .Set(static_cast<double>(stats->done_count));
+                metrics::JobQueueDepth().Add({{"queue", q.name}, {"status", "DEAD_LETTERED"}})
+                    .Set(static_cast<double>(stats->dead_letter_count));
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("Queue depth snapshot failed", {{"error", e.what()}});
+        }
 
         try {
             auto stale_workers = worker_repo.FetchStaleWorkers(
@@ -221,7 +249,8 @@ void Scheduler::HeartbeatMonitor() {
                         job.job_id, job.status, "FAILED", "WORKER_TIMEOUT",
                         worker.worker_id);
                     // Then apply retry logic.
-                    ApplyRetry(job_repo, job.job_id, job.retry_count, job.max_retries);
+                    ApplyRetry(job_repo, job.job_id, job.queue_name,
+                               job.retry_count, job.max_retries);
                 }
             }
         } catch (const std::exception& e) {
@@ -236,6 +265,7 @@ void Scheduler::HeartbeatMonitor() {
 
 void Scheduler::ApplyRetry(db::IJobRepository& job_repo,
                              const std::string&  job_id,
+                             const std::string&  queue_name,
                              int                 retry_count,
                              int                 max_retries) {
     if (retry_count < max_retries) {
@@ -268,6 +298,9 @@ void Scheduler::ApplyRetry(db::IJobRepository& job_repo,
             bool ok = job_repo.TransitionJobStatus(
                 job_id, "FAILED", "DEAD_LETTERED", "MAX_RETRIES_EXCEEDED");
             if (ok) {
+                metrics::JobTotal()
+                    .Add({{"queue", queue_name}, {"status", "DEAD_LETTERED"}})
+                    .Increment();
                 LOG_INFO("Job dead-lettered",
                          {{"job_id", job_id}, {"retry_count", retry_count}});
             }

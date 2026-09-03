@@ -6,6 +6,7 @@
 #include <pqxx/pqxx>
 
 #include "common/logging/logger.h"
+#include "common/metrics/metrics.h"
 
 namespace jq::db {
 
@@ -36,6 +37,7 @@ constexpr const char* kQueueSelect =
 QueueRow QueueRepository::CreateQueue(const std::string& name,
                                        int                max_retries,
                                        int                ttl_seconds) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("CreateQueue"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -68,6 +70,7 @@ QueueRow QueueRepository::CreateQueue(const std::string& name,
 // ---------------------------------------------------------------------------
 
 bool QueueRepository::DeleteQueue(const std::string& name, bool force) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("DeleteQueue"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -99,6 +102,7 @@ bool QueueRepository::DeleteQueue(const std::string& name, bool force) {
 // ---------------------------------------------------------------------------
 
 std::vector<QueueRow> QueueRepository::ListQueues() {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("ListQueues"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
@@ -119,6 +123,7 @@ std::vector<QueueRow> QueueRepository::ListQueues() {
 // ---------------------------------------------------------------------------
 
 std::optional<QueueStatsRow> QueueRepository::GetQueueStats(const std::string& name) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("GetQueueStats"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());

@@ -1,12 +1,38 @@
 #pragma once
 
+#include <chrono>
 #include <memory>
+#include <string>
 #include <prometheus/counter.h>
 #include <prometheus/gauge.h>
 #include <prometheus/histogram.h>
 #include <prometheus/registry.h>
 
 namespace jq::metrics {
+
+// ---------------------------------------------------------------------------
+// ScopedDuration — RAII timer that observes elapsed seconds into a histogram
+// on destruction. Construct at the top of the scope being timed:
+//   metrics::ScopedDuration timer(metrics::DbQueryDuration().Add({{"query_name", "X"}}));
+// ---------------------------------------------------------------------------
+class ScopedDuration {
+public:
+    explicit ScopedDuration(prometheus::Histogram& hist)
+        : hist_(hist), start_(std::chrono::steady_clock::now()) {}
+
+    ~ScopedDuration() {
+        const double elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - start_).count();
+        hist_.Observe(elapsed);
+    }
+
+    ScopedDuration(const ScopedDuration&)            = delete;
+    ScopedDuration& operator=(const ScopedDuration&) = delete;
+
+private:
+    prometheus::Histogram&               hist_;
+    std::chrono::steady_clock::time_point start_;
+};
 
 // ---------------------------------------------------------------------------
 // Global prometheus registry — shared by all metrics in this process.
@@ -52,6 +78,12 @@ SchedulerJobsAssignedTotal();
 // jq_db_query_duration_seconds{query_name} — Histogram
 prometheus::Family<prometheus::Histogram>&
 DbQueryDuration();
+
+// Returns the jq_db_query_duration_seconds child for the given query name,
+// with the default duration buckets applied. Repository methods time
+// themselves with:
+//   metrics::ScopedDuration timer(metrics::DbQueryTimer("MethodName"));
+prometheus::Histogram& DbQueryTimer(const std::string& query_name);
 
 // jq_redis_operation_duration_seconds{operation} — Histogram
 prometheus::Family<prometheus::Histogram>&
