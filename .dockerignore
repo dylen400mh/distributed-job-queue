@@ -6,5 +6,4 @@ docs/
 tasks/
 grafana/
 prometheus/
-k8s/
 terraform/

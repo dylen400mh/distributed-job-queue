@@ -32,8 +32,8 @@ int ClampLimit(int requested) {
 
 // ---------------------------------------------------------------------------
 
-JobServiceImpl::JobServiceImpl(db::IJobRepository& repo, IKafkaProducer& kafka)
-    : repo_(repo), kafka_(kafka) {}
+JobServiceImpl::JobServiceImpl(db::IJobRepository& repo)
+    : repo_(repo) {}
 
 // ---------------------------------------------------------------------------
 // SubmitJob
@@ -81,13 +81,6 @@ grpc::Status JobServiceImpl::SubmitJob(grpc::ServerContext*    /*ctx*/,
         LOG_ERROR("SubmitJob: InsertJob failed", {{"error", e.what()}});
         return grpc::Status(grpc::StatusCode::INTERNAL, "failed to persist job");
     }
-
-    // Publish job.submitted Kafka event (non-critical).
-    JobEvent ev;
-    ev.set_job_id(job_id);
-    ev.set_to_status(PENDING);
-    ev.set_reason("SUBMITTED");
-    PublishEvent(KafkaTopics::kJobSubmitted, ev);
 
     LOG_INFO("Job submitted", {{"job_id", job_id}, {"queue", req->queue_name()}});
     resp->set_job_id(job_id);
@@ -138,14 +131,6 @@ grpc::Status JobServiceImpl::CancelJob(grpc::ServerContext*    /*ctx*/,
         return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
                             "job state changed concurrently; cannot cancel");
     }
-
-    // Publish job.dead-lettered event.
-    JobEvent ev;
-    ev.set_job_id(req->job_id());
-    ev.set_from_status(StatusFromString(job->status));
-    ev.set_to_status(DEAD_LETTERED);
-    ev.set_reason("CANCELLED");
-    PublishEvent(KafkaTopics::kJobDeadLettered, ev);
 
     LOG_INFO("Job cancelled", {{"job_id", req->job_id()}});
     return grpc::Status::OK;
@@ -299,19 +284,6 @@ grpc::Status JobServiceImpl::RetryJob(grpc::ServerContext*    /*ctx*/,
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-void JobServiceImpl::PublishEvent(const std::string& topic, const JobEvent& event) {
-    try {
-        std::string serialized;
-        event.SerializeToString(&serialized);
-        std::vector<uint8_t> payload(serialized.begin(), serialized.end());
-        kafka_.Publish(topic, event.job_id(), payload);
-    } catch (const std::exception& e) {
-        // FR-038: Kafka unavailability must not block job processing.
-        LOG_WARN("Failed to publish Kafka event",
-                 {{"topic", topic}, {"job_id", event.job_id()}, {"error", e.what()}});
-    }
-}
 
 Job JobServiceImpl::JobRowToProto(const db::JobRow& row) {
     Job j;

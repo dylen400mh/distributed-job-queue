@@ -5,7 +5,6 @@
 #include <grpcpp/grpcpp.h>
 
 #include "job_service.grpc.pb.h"
-#include "common/kafka/kafka_producer.h"
 #include "server/db/job_repository.h"
 
 namespace jq {
@@ -13,12 +12,12 @@ namespace jq {
 // ---------------------------------------------------------------------------
 // JobServiceImpl — implements all six JobService RPCs.
 //
-// Depends on IJobRepository and IKafkaProducer so it can be unit-tested
-// with mocks without a real database or Kafka broker.
+// Depends on IJobRepository so it can be unit-tested with a mock without a
+// real database.
 // ---------------------------------------------------------------------------
 class JobServiceImpl final : public JobService::Service {
 public:
-    JobServiceImpl(db::IJobRepository& repo, IKafkaProducer& kafka);
+    explicit JobServiceImpl(db::IJobRepository& repo);
 
     grpc::Status SubmitJob(grpc::ServerContext*        ctx,
                            const SubmitJobRequest*     req,
@@ -46,11 +45,6 @@ public:
 
 private:
     db::IJobRepository& repo_;
-    IKafkaProducer&     kafka_;
-
-    // Publish a JobEvent proto message to Kafka.
-    // Swallows exceptions — Kafka is not on the critical path (FR-038).
-    void PublishEvent(const std::string& topic, const JobEvent& event);
 
     // Build a proto Job message from a DB row.
     static Job JobRowToProto(const db::JobRow& row);

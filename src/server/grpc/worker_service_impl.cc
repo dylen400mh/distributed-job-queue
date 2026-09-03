@@ -8,7 +8,6 @@
 
 #include <grpcpp/grpcpp.h>
 
-#include "common.pb.h"
 #include "common/logging/logger.h"
 #include "server/scheduler/scheduler.h"
 
@@ -16,11 +15,9 @@ namespace jq {
 
 WorkerServiceImpl::WorkerServiceImpl(db::IJobRepository&    job_repo,
                                      db::IWorkerRepository& worker_repo,
-                                     IKafkaProducer&        kafka,
                                      WorkerRegistry&        registry)
     : job_repo_(job_repo),
       worker_repo_(worker_repo),
-      kafka_(kafka),
       registry_(registry) {}
 
 // ---------------------------------------------------------------------------
@@ -190,15 +187,6 @@ grpc::Status WorkerServiceImpl::ReportResult(grpc::ServerContext*       /*ctx*/,
     registry_.DecrementActiveCount(req->worker_id());
 
     if (req->success()) {
-        // Publish job.completed event.
-        JobEvent ev;
-        ev.set_job_id(req->job_id());
-        ev.set_from_status(RUNNING);
-        ev.set_to_status(DONE);
-        ev.set_reason("SUCCESS");
-        ev.set_worker_id(req->worker_id());
-        PublishEvent(KafkaTopics::kJobCompleted, ev);
-
         LOG_INFO("Job completed", {{"job_id", req->job_id()}});
     } else {
         // Failure — apply retry logic.
@@ -231,13 +219,6 @@ grpc::Status WorkerServiceImpl::ReportResult(grpc::ServerContext*       /*ctx*/,
                 job_repo_.TransitionJobStatus(
                     req->job_id(), "FAILED", "DEAD_LETTERED", "MAX_RETRIES_EXCEEDED",
                     req->worker_id());
-                JobEvent ev;
-                ev.set_job_id(req->job_id());
-                ev.set_from_status(FAILED);
-                ev.set_to_status(DEAD_LETTERED);
-                ev.set_reason("MAX_RETRIES_EXCEEDED");
-                ev.set_worker_id(req->worker_id());
-                PublishEvent(KafkaTopics::kJobDeadLettered, ev);
                 LOG_INFO("Job dead-lettered", {{"job_id", req->job_id()}});
             } catch (const std::exception& e) {
                 LOG_ERROR("Dead-letter transition failed",
@@ -275,22 +256,6 @@ grpc::Status WorkerServiceImpl::Deregister(grpc::ServerContext*     /*ctx*/,
 
     LOG_INFO("Worker deregistered", {{"worker_id", req->worker_id()}});
     return grpc::Status::OK;
-}
-
-// ---------------------------------------------------------------------------
-// PublishEvent
-// ---------------------------------------------------------------------------
-
-void WorkerServiceImpl::PublishEvent(const std::string& topic, const JobEvent& ev) {
-    try {
-        std::string serialized;
-        ev.SerializeToString(&serialized);
-        std::vector<uint8_t> payload(serialized.begin(), serialized.end());
-        kafka_.Publish(topic, ev.job_id(), payload);
-    } catch (const std::exception& e) {
-        LOG_WARN("Failed to publish Kafka event",
-                 {{"topic", topic}, {"job_id", ev.job_id()}, {"error", e.what()}});
-    }
 }
 
 }  // namespace jq

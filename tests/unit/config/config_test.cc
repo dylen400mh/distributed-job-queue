@@ -130,7 +130,7 @@ TEST(ConfigTest, ValidateConfigDetectsMissingUser) {
 TEST(ConfigTest, ValidateConfigPassesWithMinimalValidConfig) {
     jq::Config cfg;
     cfg.db.user = "u";
-    // All other fields have valid defaults (host, redis.addr, kafka.brokers, ports)
+    // All other fields have valid defaults (host, redis.addr, ports)
 
     const auto errors = jq::ValidateConfig(cfg);
     EXPECT_TRUE(errors.empty());

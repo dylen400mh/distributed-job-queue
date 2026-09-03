@@ -15,7 +15,7 @@ if(APPLE)
     list(PREPEND CMAKE_PREFIX_PATH /opt/homebrew)
     # pkg-config — include opt/* paths for keg-only Homebrew formulas
     set(ENV{PKG_CONFIG_PATH}
-        "/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/libpq/lib/pkgconfig:/opt/homebrew/opt/libpqxx/lib/pkgconfig:/opt/homebrew/opt/hiredis/lib/pkgconfig:/opt/homebrew/opt/librdkafka/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}"
+        "/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/libpq/lib/pkgconfig:/opt/homebrew/opt/libpqxx/lib/pkgconfig:/opt/homebrew/opt/hiredis/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}"
     )
 else()
     # Debian/Ubuntu: cmake config files (gRPC, protobuf, abseil, Boost, …) are
@@ -50,7 +50,6 @@ pkg_check_modules(GRPC_PP  REQUIRED IMPORTED_TARGET grpc++)
 pkg_check_modules(PROTOBUF REQUIRED IMPORTED_TARGET protobuf)
 pkg_check_modules(LIBPQXX  REQUIRED IMPORTED_TARGET libpqxx)
 pkg_check_modules(HIREDIS  REQUIRED IMPORTED_TARGET hiredis)
-pkg_check_modules(RDKAFKA  REQUIRED IMPORTED_TARGET rdkafka++)
 pkg_check_modules(YAML_CPP REQUIRED IMPORTED_TARGET yaml-cpp)
 
 # ---------------------------------------------------------------------------
@@ -154,21 +153,6 @@ target_link_libraries(jq_redis PUBLIC
 )
 
 # ---------------------------------------------------------------------------
-# jq_kafka — librdkafka producer + consumer wrappers
-# ---------------------------------------------------------------------------
-add_library(jq_kafka STATIC
-    src/common/kafka/kafka_producer.cc
-    src/common/kafka/kafka_consumer.cc
-)
-target_include_directories(jq_kafka PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(jq_kafka PUBLIC
-    jq_metrics
-    jq_log
-    jq_config
-    PkgConfig::RDKAFKA
-)
-
-# ---------------------------------------------------------------------------
 # jq_db — shared database layer (connection pool, repository base, migrations)
 # ---------------------------------------------------------------------------
 add_library(jq_db STATIC
@@ -188,7 +172,6 @@ set(COMMON_LIBS
     jq_db
     jq_metrics
     jq_redis
-    jq_kafka
     proto_gen
     PkgConfig::GRPC_PP
     PkgConfig::PROTOBUF
@@ -203,7 +186,6 @@ set(COMMON_LIBS
     prometheus-cpp::core
     PkgConfig::LIBPQXX
     PkgConfig::HIREDIS
-    PkgConfig::RDKAFKA
 )
 
 # ---------------------------------------------------------------------------
@@ -231,7 +213,6 @@ target_include_directories(jq_server_scheduler PUBLIC
 target_link_libraries(jq_server_scheduler PUBLIC
     jq_server_db
     jq_redis
-    jq_kafka
     jq_metrics
     jq_log
     proto_gen
@@ -255,7 +236,6 @@ target_include_directories(jq_server_grpc PUBLIC
 target_link_libraries(jq_server_grpc PUBLIC
     jq_server_db
     jq_server_scheduler
-    jq_kafka
     jq_log
     proto_gen
     PkgConfig::GRPC_PP
@@ -269,7 +249,7 @@ add_library(jq_server_health STATIC
     src/server/health/health_server.cc
 )
 target_include_directories(jq_server_health PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(jq_server_health PUBLIC jq_db jq_redis jq_kafka jq_log PkgConfig::LIBPQXX)
+target_link_libraries(jq_server_health PUBLIC jq_db jq_redis jq_log PkgConfig::LIBPQXX)
 
 # ---------------------------------------------------------------------------
 # jq-server

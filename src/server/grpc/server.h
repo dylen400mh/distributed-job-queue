@@ -5,7 +5,6 @@
 #include <grpcpp/grpcpp.h>
 
 #include "common/config/config.h"
-#include "common/kafka/kafka_producer.h"
 #include "common/db/connection_pool.h"
 #include "server/db/job_repository.h"
 #include "server/db/queue_repository.h"
@@ -23,15 +22,14 @@ namespace jq {
 //              the Scheduler. Starts the scheduler alongside the gRPC server.
 //
 // Usage:
-//   GrpcServer srv(cfg, pool, kafka);
+//   GrpcServer srv(cfg, pool);
 //   srv.Start();   // blocks until Stop() is called from another thread
 //   srv.Stop();    // stop scheduler, drain in-flight RPCs, shut down
 // ---------------------------------------------------------------------------
 class GrpcServer {
 public:
     GrpcServer(const Config&       cfg,
-               db::ConnectionPool& pool,
-               IKafkaProducer&     kafka);
+               db::ConnectionPool& pool);
 
     // Build and start the gRPC server (and scheduler). Blocks until Stop().
     void Start();

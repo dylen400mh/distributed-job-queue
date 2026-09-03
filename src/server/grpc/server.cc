@@ -12,17 +12,16 @@
 namespace jq {
 
 GrpcServer::GrpcServer(const Config&       cfg,
-                        db::ConnectionPool& pool,
-                        IKafkaProducer&     kafka)
+                        db::ConnectionPool& pool)
     : cfg_(cfg)
     , job_repo_(pool)
     , queue_repo_(pool)
     , worker_repo_(pool)
     , registry_()
-    , job_svc_(job_repo_, kafka)
-    , worker_svc_(job_repo_, worker_repo_, kafka, registry_)
-    , admin_svc_(queue_repo_, worker_repo_, registry_, pool, cfg.redis, kafka)
-    , scheduler_(pool, cfg.redis, kafka, registry_, cfg.scheduler)
+    , job_svc_(job_repo_)
+    , worker_svc_(job_repo_, worker_repo_, registry_)
+    , admin_svc_(queue_repo_, worker_repo_, registry_, pool, cfg.redis)
+    , scheduler_(pool, cfg.redis, registry_, cfg.scheduler)
 {}
 
 void GrpcServer::Start() {
@@ -61,7 +60,7 @@ void GrpcServer::Stop() {
     if (!server_) return;
     LOG_INFO("gRPC server shutting down");
     scheduler_.Stop();
-    // Give in-flight RPCs up to 30 s to complete (design-notes.md §Graceful Shutdown).
+    // Give in-flight RPCs up to 30 s to complete (see CLAUDE.md §Graceful shutdown).
     auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(30);
     server_->Shutdown(deadline);
 }

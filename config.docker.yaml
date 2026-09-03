@@ -1,7 +1,7 @@
 # config.docker.yaml — configuration for docker compose demo.
 #
 # Uses docker-internal service names so jq-server and jq-worker
-# can reach postgres, redis, and redpanda inside the compose network.
+# can reach postgres and redis inside the compose network.
 #
 # DO NOT use for production. Credentials are hardcoded here for demo convenience.
 # In production use JQ_DB_PASSWORD / JQ_REDIS_PASSWORD / etc. env vars.
@@ -25,16 +25,6 @@ redis:
   password: ""
   db: 0
   connect_timeout_ms: 1000
-
-kafka:
-  brokers:
-    - redpanda:9092         # internal listener (docker compose network)
-  producer:
-    acks: all
-    compression: snappy
-  consumer:
-    group_id: jq-server
-    auto_offset_reset: earliest
 
 scheduler:
   interval_ms: 500

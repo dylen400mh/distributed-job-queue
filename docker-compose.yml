@@ -33,30 +33,6 @@ services:
       retries: 10
 
   # ---------------------------------------------------------------------------
-  # Redpanda — Kafka-compatible event streaming (no Zookeeper required)
-  # Exposes the Kafka API on localhost:19092; internal broker at redpanda:9092
-  # ---------------------------------------------------------------------------
-  redpanda:
-    image: redpandadata/redpanda:latest
-    command:
-      - redpanda
-      - start
-      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
-      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
-      - --rpc-addr redpanda:33145
-      - --advertise-rpc-addr redpanda:33145
-      - --mode dev-container
-      - --smp 1
-      - --default-log-level=warn
-    ports:
-      - "19092:19092"   # Kafka API (used by jq-server and jq-worker)
-    healthcheck:
-      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy.*true' || rpk cluster health | grep -q 'is_healthy: true'"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-
-  # ---------------------------------------------------------------------------
   # jq-server — control plane (gRPC API + scheduler)
   # gRPC:    localhost:50051
   # Metrics: localhost:9090
@@ -77,8 +53,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      redpanda:
         condition: service_healthy
     restart: on-failure
 

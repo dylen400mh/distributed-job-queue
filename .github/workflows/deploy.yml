@@ -23,7 +23,8 @@ permissions:
 # Variables  (Settings → Secrets and variables → Actions → Variables):
 #   AWS_REGION          e.g. us-east-1
 #   AWS_ACCOUNT_ID      12-digit AWS account ID, e.g. 123456789012
-#   EKS_CLUSTER_NAME    Name of your EKS cluster, e.g. jq-cluster
+#   APP_INSTANCE_ID     EC2 instance ID running jq-server/jq-worker
+#                       (terraform output app_instance_id), e.g. i-0abc123
 # ---------------------------------------------------------------------------
 
 jobs:
@@ -94,64 +95,57 @@ jobs:
           echo "image_${{ matrix.target }}=${IMAGE}" >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
-  # Job 2: Apply manifests to EKS and roll out new images.
-  # Runs only after both matrix legs of build-and-push succeed.
+  # Job 2: Roll the new images out to the app EC2 host via SSM.
+  # Runs only after both matrix legs of build-and-push succeed. No SSH —
+  # the command runs through SSM Run Command against the instance's agent.
   # ---------------------------------------------------------------------------
   deploy:
-    name: Deploy to EKS
+    name: Deploy to EC2
     runs-on: ubuntu-22.04
     needs: build-and-push
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Configure kubectl for EKS
+      # Point /opt/jq/.env at the new SHA-tagged images and re-run Compose.
+      # Polls the SSM command invocation until it finishes, then fails the
+      # job if the remote script exited non-zero.
+      - name: Roll out via SSM
+        env:
+          DEPLOY_REGION: ${{ vars.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          APP_INSTANCE_ID: ${{ vars.APP_INSTANCE_ID }}
+          IMAGE_TAG: sha-${{ github.sha }}
         run: |
-          aws eks update-kubeconfig \
-            --name ${{ vars.EKS_CLUSTER_NAME }} \
-            --region ${{ vars.AWS_REGION }}
+          REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$DEPLOY_REGION.amazonaws.com"
 
-      # Apply all manifests except the Secret (real values are set once via
-      # kubectl outside this workflow — see k8s/secret.yaml for instructions).
-      # All resources are idempotent; Deployments are created here on first run
-      # and the image is pinned to the exact SHA tag in the steps below.
-      - name: Apply Kubernetes manifests
-        run: |
-          kubectl apply -f k8s/namespace.yaml
-          kubectl apply -f k8s/configmap.yaml
-          kubectl apply -f k8s/server/deployment.yaml
-          kubectl apply -f k8s/server/service.yaml
-          kubectl apply -f k8s/server/hpa.yaml
-          kubectl apply -f k8s/server/pdb.yaml
-          kubectl apply -f k8s/worker/deployment.yaml
-          kubectl apply -f k8s/worker/hpa.yaml
-          kubectl apply -f k8s/worker/pdb.yaml
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$APP_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy $IMAGE_TAG" \
+            --parameters "{\"commands\":[\"set -e\",\"cd /opt/jq\",\"aws ecr get-login-password --region $DEPLOY_REGION | docker login --username AWS --password-stdin $REGISTRY\",\"sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/' .env\",\"docker compose pull\",\"docker compose up -d\"]}" \
+            --query "Command.CommandId" --output text)
 
-      # Update the running Deployment with the exact immutable SHA image tag.
-      # This triggers a rolling update; the deployment's readinessProbe ensures
-      # zero-downtime (maxUnavailable: 0 for server, maxSurge: 1).
-      - name: Roll out jq-server
-        run: |
-          kubectl set image deployment/jq-server \
-            jq-server=${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/jq-server:sha-${{ github.sha }} \
-            -n jq
-          kubectl rollout status deployment/jq-server -n jq --timeout=300s
+          echo "SSM command: $COMMAND_ID"
 
-      - name: Roll out jq-worker
-        run: |
-          kubectl set image deployment/jq-worker \
-            jq-worker=${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/jq-worker:sha-${{ github.sha }} \
-            -n jq
-          kubectl rollout status deployment/jq-worker -n jq --timeout=300s
-
-      - name: Verify pods are healthy
-        run: |
-          kubectl get pods -n jq -l app=jq-server
-          kubectl get pods -n jq -l app=jq-worker
+          for i in $(seq 1 30); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$APP_INSTANCE_ID" \
+              --query "Status" --output text 2>/dev/null || echo "Pending")
+            echo "Status: $STATUS"
+            case "$STATUS" in
+              Success) exit 0 ;;
+              Failed|Cancelled|TimedOut)
+                aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$APP_INSTANCE_ID"
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Timed out waiting for deploy command"
+          exit 1

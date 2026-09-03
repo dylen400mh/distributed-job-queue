@@ -43,20 +43,7 @@ target_link_libraries(redis_unit_tests PRIVATE
 add_test(NAME redis_unit_tests COMMAND redis_unit_tests)
 
 # ---------------------------------------------------------------------------
-# Kafka unit tests — delivery report error path (no Kafka required)
-# ---------------------------------------------------------------------------
-add_executable(kafka_unit_tests
-    unit/kafka/kafka_delivery_test.cc
-)
-target_include_directories(kafka_unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(kafka_unit_tests PRIVATE
-    jq_metrics
-    GTest::gtest_main
-)
-add_test(NAME kafka_unit_tests COMMAND kafka_unit_tests)
-
-# ---------------------------------------------------------------------------
-# Server unit tests — JobService RPC logic (no DB or Kafka required)
+# Server unit tests — JobService RPC logic (no DB required)
 # ---------------------------------------------------------------------------
 add_executable(server_unit_tests
     unit/server/job_service_test.cc
@@ -69,7 +56,6 @@ target_include_directories(server_unit_tests PRIVATE
 target_link_libraries(server_unit_tests PRIVATE
     jq_server_grpc
     jq_server_db
-    jq_kafka
     jq_metrics
     jq_log
     proto_gen
@@ -94,7 +80,6 @@ target_include_directories(scheduler_unit_tests PRIVATE
 target_link_libraries(scheduler_unit_tests PRIVATE
     jq_server_scheduler
     jq_server_db
-    jq_kafka
     jq_metrics
     jq_log
     proto_gen

@@ -86,19 +86,6 @@ groups:
     interval: 30s
     rules:
 
-      # Kafka delivery failures — events are not reaching the event bus.
-      - alert: KafkaPublishErrors
-        expr: sum by (topic) (rate(jq_kafka_publish_errors_total[5m])) > 0
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Kafka publish errors on topic {{ $labels.topic }}"
-          description: >
-            {{ $value | humanize }} errors/sec publishing to topic
-            {{ $labels.topic }}. Kafka may be unreachable or the topic
-            may not exist. Job processing continues but audit events are lost.
-
       # Redis latency high — lock contention or network issues affecting the scheduler.
       - alert: HighRedisLatency
         expr: >

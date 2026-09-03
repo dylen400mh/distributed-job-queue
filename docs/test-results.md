@@ -4,6 +4,11 @@
 **Branch:** main
 **Build:** `cmake -DCMAKE_BUILD_TYPE=Release`
 
+> Historical record from the Kafka + Kubernetes/EKS architecture (since removed —
+> see README.md). FR/NFR IDs and counts below reflect the spec as it existed at
+> the time; kept as-is for the record rather than re-tested against the current,
+> simplified architecture.
+
 ---
 
 ## Summary

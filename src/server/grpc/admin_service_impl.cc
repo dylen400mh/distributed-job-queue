@@ -5,7 +5,6 @@
 #include <grpcpp/grpcpp.h>
 #include <pqxx/pqxx>
 
-#include "common/kafka/kafka_producer.h"
 #include "common/logging/logger.h"
 #include "common/redis/redis_client.h"
 #include "common.pb.h"
@@ -71,14 +70,12 @@ AdminServiceImpl::AdminServiceImpl(db::IQueueRepository&  queue_repo,
                                     db::IWorkerRepository& worker_repo,
                                     WorkerRegistry&        registry,
                                     db::ConnectionPool&    pool,
-                                    const RedisConfig&     redis_cfg,
-                                    IKafkaProducer&        kafka)
+                                    const RedisConfig&     redis_cfg)
     : queue_repo_(queue_repo)
     , worker_repo_(worker_repo)
     , registry_(registry)
     , pool_(pool)
     , redis_cfg_(redis_cfg)
-    , kafka_(kafka)
 {}
 
 // ---------------------------------------------------------------------------
@@ -275,16 +272,6 @@ grpc::Status AdminServiceImpl::GetSystemStatus(grpc::ServerContext*,
             RedisClient rc(redis_cfg_);
             ok = rc.IsConnected();
         } catch (...) {}
-        comp->set_healthy(ok);
-        comp->set_message(ok ? "reachable" : "unreachable");
-        if (!ok) all_healthy = false;
-    }
-
-    // Kafka — probe broker reachability via metadata fetch.
-    {
-        auto* comp = resp->add_components();
-        comp->set_name("kafka");
-        bool ok = kafka_.IsHealthy();
         comp->set_healthy(ok);
         comp->set_message(ok ? "reachable" : "unreachable");
         if (!ok) all_healthy = false;

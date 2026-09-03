@@ -291,31 +291,6 @@
       ],
       "title": "Redis Operation Duration p95",
       "type": "timeseries"
-    },
-
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Rate of Kafka publish failures by topic. Any non-zero value means audit events are being dropped.",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "unit": "reqps",
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": 0 }, { "color": "red", "value": 0.001 }] }
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 31 },
-      "id": 11,
-      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
-      "targets": [
-        {
-          "expr": "sum by (topic) (rate(jq_kafka_publish_errors_total[5m]))",
-          "legendFormat": "{{topic}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Kafka Publish Error Rate",
-      "type": "timeseries"
     }
 
   ],

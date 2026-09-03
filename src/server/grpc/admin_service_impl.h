@@ -11,8 +11,6 @@
 
 namespace jq {
 
-class IKafkaProducer;  // forward declaration — full type only needed in .cc
-
 // ---------------------------------------------------------------------------
 // AdminServiceImpl — implements all eight AdminService RPCs.
 //
@@ -29,8 +27,7 @@ public:
                      db::IWorkerRepository& worker_repo,
                      WorkerRegistry&        registry,
                      db::ConnectionPool&    pool,
-                     const RedisConfig&     redis_cfg,
-                     IKafkaProducer&        kafka);
+                     const RedisConfig&     redis_cfg);
 
     grpc::Status CreateQueue(grpc::ServerContext*,
                              const CreateQueueRequest*,
@@ -70,7 +67,6 @@ private:
     WorkerRegistry&        registry_;
     db::ConnectionPool&    pool_;
     const RedisConfig&     redis_cfg_;
-    IKafkaProducer&        kafka_;
 };
 
 }  // namespace jq

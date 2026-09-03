@@ -1,5 +1,10 @@
 # Performance Requirements — Methodology & Results
 
+> Historical record from the Kafka + Kubernetes/EKS architecture (since removed —
+> see README.md, which now describes a single-EC2-host deployment). Measurements
+> and commands below (kubectl port-forward, etc.) reflect that prior setup and
+> have not been re-run against the current architecture.
+
 This document explains how each performance NFR was measured, what obstacles were encountered, and what the results mean. All measurements were taken on the live AWS EKS deployment (us-east-1).
 
 Charts are generated from live Prometheus data using `scripts/gen_perf_charts.py`. To regenerate:

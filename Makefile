@@ -13,7 +13,6 @@ build:
 
 test-unit: build
 	./build/tests/config_unit_tests
-	./build/tests/kafka_unit_tests
 	./build/tests/redis_unit_tests
 	./build/tests/scheduler_unit_tests
 	./build/tests/server_unit_tests
@@ -53,7 +52,7 @@ test-e2e: build services
 # ---------------------------------------------------------------------------
 
 services:
-	docker compose up -d --wait postgres redis redpanda
+	docker compose up -d --wait postgres redis
 
 services-down:
 	docker compose down

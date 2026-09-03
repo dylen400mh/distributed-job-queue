@@ -47,9 +47,9 @@ resource "aws_iam_role_policy" "github_actions" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "ECRAuth"
-        Effect = "Allow"
-        Action = ["ecr:GetAuthorizationToken"]
+        Sid      = "ECRAuth"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
         Resource = "*"
       },
       {
@@ -70,24 +70,27 @@ resource "aws_iam_role_policy" "github_actions" {
         ]
       },
       {
-        Sid    = "EKSDescribe"
+        Sid    = "SSMDeploy"
         Effect = "Allow"
         Action = [
-          "eks:DescribeCluster",
-          "eks:ListClusters",
+          "ssm:SendCommand",
+          "ssm:GetCommandInvocation",
         ]
-        Resource = aws_eks_cluster.main.arn
+        Resource = [
+          aws_instance.app.arn,
+          "arn:aws:ssm:${var.region}::document/AWS-RunShellScript",
+        ]
       },
     ]
   })
 }
 
 # ---------------------------------------------------------------------------
-# EKS Node IAM Role — attached to the managed node group
+# App EC2 IAM Role — SSM management, ECR pull, DB secret read
 # ---------------------------------------------------------------------------
 
-resource "aws_iam_role" "eks_node" {
-  name = "${var.cluster_name}-node-role"
+resource "aws_iam_role" "app" {
+  name = "${var.cluster_name}-app-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -98,44 +101,35 @@ resource "aws_iam_role" "eks_node" {
     }]
   })
 
-  tags = { Name = "${var.cluster_name}-node-role" }
+  tags = { Name = "${var.cluster_name}-app-role" }
 }
 
-resource "aws_iam_role_policy_attachment" "node_worker" {
-  role       = aws_iam_role.eks_node.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+resource "aws_iam_role_policy_attachment" "app_ssm" {
+  role       = aws_iam_role.app.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-resource "aws_iam_role_policy_attachment" "node_cni" {
-  role       = aws_iam_role.eks_node.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-}
-
-resource "aws_iam_role_policy_attachment" "node_ecr" {
-  role       = aws_iam_role.eks_node.name
+resource "aws_iam_role_policy_attachment" "app_ecr_pull" {
+  role       = aws_iam_role.app.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
-# ---------------------------------------------------------------------------
-# EKS Cluster IAM Role
-# ---------------------------------------------------------------------------
+resource "aws_iam_role_policy" "app_secrets" {
+  name = "${var.cluster_name}-app-secrets"
+  role = aws_iam_role.app.id
 
-resource "aws_iam_role" "eks_cluster" {
-  name = "${var.cluster_name}-cluster-role"
-
-  assume_role_policy = jsonencode({
+  policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "eks.amazonaws.com" }
-      Action    = "sts:AssumeRole"
+      Sid      = "ReadDbPassword"
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = aws_secretsmanager_secret.db_password.arn
     }]
   })
-
-  tags = { Name = "${var.cluster_name}-cluster-role" }
 }
 
-resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
-  role       = aws_iam_role.eks_cluster.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+resource "aws_iam_instance_profile" "app" {
+  name = "${var.cluster_name}-app-profile"
+  role = aws_iam_role.app.name
 }

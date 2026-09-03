@@ -19,7 +19,7 @@ permissions:
 # Secrets  (Settings → Secrets and variables → Actions → Secrets):
 #   TF_ROLE_ARN           IAM role ARN for Terraform (needs broad AWS permissions).
 #                         Separate from AWS_ROLE_ARN (deploy role) — Terraform must
-#                         be able to create VPCs, EKS, RDS, MSK, IAM, etc.
+#                         be able to create VPCs, EC2, RDS, ElastiCache, IAM, etc.
 #                         e.g. arn:aws:iam::123456789012:role/github-terraform-jq
 #
 # Variables  (Settings → Secrets and variables → Actions → Variables):

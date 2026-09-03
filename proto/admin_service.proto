@@ -124,5 +124,5 @@ message GetSystemStatusResponse {
   bool                    healthy          = 1;
   int32                   active_workers   = 2;
   repeated QueueStats     queue_stats      = 3;
-  repeated ComponentStatus components      = 4;  // db, redis, kafka
+  repeated ComponentStatus components      = 4;  // db, redis
 }

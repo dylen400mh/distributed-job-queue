@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # VPC: 10.0.0.0/16 across 3 availability zones.
-# Public subnets:  NAT gateways, load balancers.
-# Private subnets: EKS nodes, RDS, ElastiCache, MSK.
+# Public subnets:  NAT gateways, the app EC2 host.
+# Private subnets: RDS, ElastiCache.
 # ---------------------------------------------------------------------------
 
 data "aws_availability_zones" "available" {
@@ -42,9 +42,7 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name                                        = "${var.cluster_name}-public-${local.azs[count.index]}"
-    "kubernetes.io/role/elb"                    = "1"
-    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
+    Name = "${var.cluster_name}-public-${local.azs[count.index]}"
   }
 }
 
@@ -58,9 +56,7 @@ resource "aws_subnet" "private" {
   availability_zone = local.azs[count.index]
 
   tags = {
-    Name                                        = "${var.cluster_name}-private-${local.azs[count.index]}"
-    "kubernetes.io/role/internal-elb"           = "1"
-    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
+    Name = "${var.cluster_name}-private-${local.azs[count.index]}"
   }
 }
 

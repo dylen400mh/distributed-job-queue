@@ -9,7 +9,6 @@
 #include "common.pb.h"
 #include "job_service.pb.h"
 
-#include "common/kafka/kafka_producer.h"
 #include "server/db/job_repository.h"
 #include "server/grpc/job_service_impl.h"
 
@@ -55,14 +54,6 @@ public:
                 (override));
 };
 
-class MockKafkaProducer : public jq::IKafkaProducer {
-public:
-    MOCK_METHOD(void, Publish,
-                (const std::string&, const std::string&, const std::vector<uint8_t>&),
-                (override));
-    MOCK_METHOD(void, Flush, (int), (override));
-};
-
 // ---------------------------------------------------------------------------
 // Test fixture
 // ---------------------------------------------------------------------------
@@ -70,8 +61,7 @@ public:
 class JobServiceTest : public ::testing::Test {
 protected:
     MockJobRepository  repo;
-    MockKafkaProducer  kafka;
-    jq::JobServiceImpl svc{repo, kafka};
+    jq::JobServiceImpl svc{repo};
 
     grpc::ServerContext ctx;
 
@@ -96,7 +86,6 @@ protected:
 
 TEST_F(JobServiceTest, SubmitJob_QueueNotFound_ReturnsNotFound) {
     EXPECT_CALL(repo, QueueExists("no-such-queue")).WillOnce(Return(false));
-    EXPECT_CALL(kafka, Publish(_, _, _)).Times(0);
 
     jq::SubmitJobRequest req;
     req.set_queue_name("no-such-queue");
@@ -111,8 +100,6 @@ TEST_F(JobServiceTest, SubmitJob_Success_ReturnsJobId) {
     EXPECT_CALL(repo, GetQueueMaxRetries("default")).WillOnce(Return(3));
     EXPECT_CALL(repo, InsertJob("default", _, 5, 3))
         .WillOnce(Return("job-uuid-1234"));
-    EXPECT_CALL(kafka, Publish(jq::KafkaTopics::kJobSubmitted, "job-uuid-1234", _))
-        .Times(1);
 
     jq::SubmitJobRequest req;
     req.set_queue_name("default");
@@ -165,7 +152,6 @@ TEST_F(JobServiceTest, CancelJob_PendingJob_Succeeds) {
         .WillOnce(Return(MakeRow("j2", "PENDING")));
     EXPECT_CALL(repo, TransitionJobStatus("j2", "PENDING", "DEAD_LETTERED", "CANCELLED", ""))
         .WillOnce(Return(true));
-    EXPECT_CALL(kafka, Publish(jq::KafkaTopics::kJobDeadLettered, _, _)).Times(1);
 
     jq::CancelJobRequest req;
     req.set_job_id("j2");
