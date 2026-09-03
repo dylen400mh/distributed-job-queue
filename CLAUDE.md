@@ -4,14 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workflow Rules
 
-1. **Plan first:** Read the codebase for relevant files and write a plan to `tasks/todo.md` before starting work.
+1. **Plan first:** Read the codebase for relevant files and state a plan before starting work.
 2. **Verify plan:** Check in with the user before beginning implementation.
-3. **Mark progress:** Check off todo items as you complete them.
-4. **Communicate simply:** Give a high-level explanation of changes at each step.
-5. **Keep it simple:** Every change should impact as little code as possible. Avoid large or complex changes.
-6. **Document activity:** Append all actions (including user prompts) to `docs/activity.md`. Read it when context is needed.
-7. **Push on success:** Push changes to the git repository after every successful change.
-8. **Review at end:** Add a review section to `todo.md` summarizing changes made.
+3. **Communicate simply:** Give a high-level explanation of changes at each step, and a summary of what changed at the end.
+4. **Keep it simple:** Every change should impact as little code as possible. Avoid large or complex changes.
+5. **Push on success:** Push changes to the git repository after every successful change.
 
 ## Project Overview
 
@@ -92,8 +89,7 @@ terraform/          # AWS infra (VPC, EC2, RDS, ElastiCache, ECR) + app host use
 cmake/              # toolchain-macos.cmake
 prometheus/         # Prometheus config and alert rules
 grafana/            # Grafana dashboard JSON
-docs/               # Architecture docs, activity.md
-tasks/              # todo.md for current work
+docs/               # Architecture docs
 ```
 
 ## Architecture
@@ -147,4 +143,3 @@ Generated C++ sources are produced by `protoc` + `grpc_cpp_plugin` as part of th
 
 - `README.md` — Requirements summary (condensed FR/NFR), architecture diagram, quick start, deployment
 - `docs/performance.md`, `docs/test-results.md` — Historical measurement records from the prior Kafka/EKS architecture
-- `docs/activity.md` — Chronological log of work sessions on this repo
