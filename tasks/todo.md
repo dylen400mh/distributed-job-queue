@@ -73,10 +73,21 @@ Confirmed with user:
 - [x] `grep -rn -i kafka` / `grep -rn -i "kubernetes\|k8s\|eks"` across the repo — confirm only historical docs (performance.md/test-results.md) remain
 
 ### E. Ship
-- [ ] New branch `remove-kafka-k8s`
-- [ ] Logical commits per phase (A/B/C)
-- [ ] Append activity log entry to `docs/activity.md`
+- [x] New branch `remove-kafka-k8s`
+- [x] Logical commits per phase (A/B/C)
+- [x] Append activity log entry to `docs/activity.md`
 - [ ] Push branch, open PR to `main`
 
 ## Review
-(filled in after implementation)
+
+**Kafka** was write-only and unconsumed — `jq-server` published lifecycle events that nothing ever read (`KafkaConsumer` existed in the source tree but was never instantiated), and every event it carried was already durably written to `job_events` in the same DB transaction. Removed entirely: `src/common/kafka/`, the `IKafkaProducer` wiring through every server-side service and the scheduler, the CMake target + librdkafka dependency, the Prometheus alert + Grafana panel, the Redpanda dev service, and all `kafka_unit_tests`/mock plumbing in tests.
+
+**Kubernetes/EKS** was one of two deployment targets layered on top of Docker Compose, which already runs the full stack standalone (NFR-019). Removed `k8s/` and the EKS/MSK Terraform. Per the user's choice, replaced the EKS deploy target with a single EC2 host (`terraform/ec2.tf` + `templates/app_user_data.sh.tftpl`) running the same Docker Compose stack, managed via SSM (no SSH). `deploy.yml` now rolls out new images via `aws ssm send-command` instead of `kubectl set image`. RDS, ElastiCache, ECR, and the VPC are unchanged.
+
+**Docs** — `requirements.md`, `design-notes.md`, and `tech-stack.md` were folded into `README.md` (condensed Requirements section, updated architecture/tech-stack/deployment) and `CLAUDE.md` (design rationale, graceful shutdown, testing strategy), then deleted along with `prompts.md` (superseded build-prompt log). Swept the rest of the repo for leftover references the main phases missed: `ci.yml`, `Makefile`, `admin_service.proto`, `.dockerignore`, and two code comments pointing at the now-deleted `design-notes.md`.
+
+**Files changed:** 3 commits, ~60 files. Full build (`cmake --build build --parallel`) succeeds; `ctest` passes everything except `db_unit_tests`, which fails only because no local Postgres is running (pre-existing, unrelated to this change — confirmed via `docker ps`). `terraform validate`/`fmt` pass against the cached AWS provider (no real AWS calls made — infra was already destroyed per the user). `docker compose config` validates.
+
+**Not done / explicitly out of scope:** no `terraform plan`/`apply` against real AWS (nothing to compare against — infra already destroyed); no re-benchmark of the historical throughput/latency numbers in `docs/performance.md`/`docs/test-results.md` (left as dated records, per the user's decision to leave them untouched); the EC2 replacement is a new, never-deployed code path — worth a real `terraform apply` + smoke test before relying on it for a live deploy.
+
+**Suggested next steps:** run `terraform plan` against a real AWS account to sanity-check the EC2/IAM/SG changes before merging to a branch anyone deploys from; consider adding a CloudWatch alarm or simple uptime check for the single EC2 host now that there's no HPA/PDB safety net; if the team ever needs true multi-instance `jq-server`/`jq-worker` scaling again, an ASG behind the existing `app` security group would be the natural next step rather than reintroducing Kubernetes.
