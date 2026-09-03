@@ -1,0 +1,72 @@
+#!/bin/bash
+# Bootstrap the app host: install Docker, write the Compose stack, bring it up.
+# Re-run manually (or via the deploy.yml SSM command) to roll a new image tag.
+set -euo pipefail
+
+dnf install -y docker awscli
+systemctl enable --now docker
+
+# docker-compose-plugin isn't in the AL2023 base repos; install the CLI plugin directly.
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -sSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+mkdir -p /opt/jq
+cd /opt/jq
+
+DB_PASSWORD=$(aws secretsmanager get-secret-value \
+  --region "${region}" \
+  --secret-id "${db_secret_arn}" \
+  --query SecretString --output text)
+
+cat > /opt/jq/.env <<EOF
+ECR_SERVER_IMAGE=${ecr_server_url}
+ECR_WORKER_IMAGE=${ecr_worker_url}
+IMAGE_TAG=latest
+JQ_DB_HOST=${db_host}
+JQ_DB_PORT=${db_port}
+JQ_DB_NAME=${db_name}
+JQ_DB_USER=${db_user}
+JQ_DB_PASSWORD=$DB_PASSWORD
+JQ_REDIS_ADDR=${redis_addr}
+EOF
+chmod 600 /opt/jq/.env
+
+cat > /opt/jq/config.yaml <<'EOF'
+logging:
+  level: info
+  format: json
+EOF
+
+cat > /opt/jq/docker-compose.yml <<'EOF'
+services:
+  jq-server:
+    image: $${ECR_SERVER_IMAGE}:$${IMAGE_TAG}
+    env_file: .env
+    volumes:
+      - ./config.yaml:/etc/jq/config.yaml:ro
+    command: ["--config", "/etc/jq/config.yaml"]
+    ports:
+      - "50051:50051"
+      - "9090:9090"
+      - "8080:8080"
+    restart: always
+
+  jq-worker:
+    image: $${ECR_WORKER_IMAGE}:$${IMAGE_TAG}
+    env_file: .env
+    volumes:
+      - ./config.yaml:/etc/jq/config.yaml:ro
+    command: ["--config", "/etc/jq/config.yaml", "--server-addr", "jq-server:50051", "--queues", "default"]
+    depends_on:
+      - jq-server
+    restart: always
+EOF
+
+aws ecr get-login-password --region "${region}" \
+  | docker login --username AWS --password-stdin "$(echo "${ecr_server_url}" | cut -d/ -f1)"
+
+cd /opt/jq
+docker compose pull
+docker compose up -d

@@ -23,10 +23,10 @@ resource "aws_db_instance" "postgres" {
   db_subnet_group_name   = aws_db_subnet_group.postgres.name
   vpc_security_group_ids = [aws_security_group.rds.id]
 
-  multi_az               = true
-  publicly_accessible    = false
-  deletion_protection    = true
-  skip_final_snapshot    = false
+  multi_az                  = true
+  publicly_accessible       = false
+  deletion_protection       = true
+  skip_final_snapshot       = false
   final_snapshot_identifier = "${var.cluster_name}-postgres-final"
 
   backup_retention_period = 7

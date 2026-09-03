@@ -5,41 +5,17 @@ variable "region" {
 }
 
 variable "cluster_name" {
-  description = "Name of the EKS cluster"
+  description = "Name prefix for all provisioned resources"
   type        = string
   default     = "jq-cluster"
 }
 
-variable "kubernetes_version" {
-  description = "Kubernetes version for the EKS cluster"
+# ---------- App EC2 host ----------
+
+variable "app_instance_type" {
+  description = "EC2 instance type for the single app host running jq-server + jq-worker via Docker Compose"
   type        = string
-  default     = "1.30"
-}
-
-# ---------- EKS node group ----------
-
-variable "node_instance_type" {
-  description = "EC2 instance type for EKS worker nodes"
-  type        = string
-  default     = "t3.medium"
-}
-
-variable "node_min" {
-  description = "Minimum number of EKS nodes"
-  type        = number
-  default     = 2
-}
-
-variable "node_max" {
-  description = "Maximum number of EKS nodes"
-  type        = number
-  default     = 5
-}
-
-variable "node_desired" {
-  description = "Desired number of EKS nodes at launch"
-  type        = number
-  default     = 2
+  default     = "t3.small"
 }
 
 # ---------- RDS ----------
@@ -74,26 +50,6 @@ variable "redis_node_type" {
   description = "ElastiCache Redis node type"
   type        = string
   default     = "cache.t3.micro"
-}
-
-# ---------- MSK ----------
-
-variable "kafka_broker_instance_type" {
-  description = "MSK broker instance type"
-  type        = string
-  default     = "kafka.t3.small"
-}
-
-variable "kafka_broker_count" {
-  description = "Number of MSK broker nodes (must equal number of AZs in private subnets)"
-  type        = number
-  default     = 2
-}
-
-variable "kafka_version" {
-  description = "Apache Kafka version for MSK"
-  type        = string
-  default     = "3.6.0"
 }
 
 # ---------- GitHub OIDC ----------

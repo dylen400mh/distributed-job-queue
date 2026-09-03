@@ -8,9 +8,7 @@
 #   Variables  (Settings → Secrets and variables → Actions → Variables):
 #     AWS_REGION        →  region
 #     AWS_ACCOUNT_ID    →  aws_account_id
-#     EKS_CLUSTER_NAME  →  eks_cluster_name
-#
-# Then update k8s/secret.yaml with the real endpoint values below.
+#     APP_INSTANCE_ID   →  app_instance_id
 # ---------------------------------------------------------------------------
 
 output "region" {
@@ -23,9 +21,9 @@ output "aws_account_id" {
   value       = data.aws_caller_identity.current.account_id
 }
 
-output "eks_cluster_name" {
-  description = "EKS cluster name — set as GitHub Variable EKS_CLUSTER_NAME"
-  value       = aws_eks_cluster.main.name
+output "app_instance_id" {
+  description = "EC2 instance ID running jq-server/jq-worker — set as GitHub Variable APP_INSTANCE_ID"
+  value       = aws_instance.app.id
 }
 
 output "github_actions_role_arn" {
@@ -44,7 +42,7 @@ output "ecr_worker_url" {
 }
 
 output "rds_endpoint" {
-  description = "RDS PostgreSQL endpoint — use in k8s/secret.yaml db_host"
+  description = "RDS PostgreSQL endpoint"
   value       = aws_db_instance.postgres.address
 }
 
@@ -60,11 +58,6 @@ output "db_password_secret_arn" {
 }
 
 output "redis_endpoint" {
-  description = "ElastiCache Redis primary endpoint — use in k8s/secret.yaml redis_addr"
+  description = "ElastiCache Redis primary endpoint"
   value       = "${aws_elasticache_cluster.redis.cache_nodes[0].address}:${aws_elasticache_cluster.redis.cache_nodes[0].port}"
-}
-
-output "msk_bootstrap_brokers" {
-  description = "MSK plaintext bootstrap broker string — use in k8s/secret.yaml kafka_brokers"
-  value       = aws_msk_cluster.kafka.bootstrap_brokers
 }
