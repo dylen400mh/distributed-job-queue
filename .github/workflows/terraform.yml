@@ -1,7 +1,19 @@
 name: Terraform
 
 on:
+  pull_request:
+    paths:
+      - "terraform/**"
   workflow_dispatch:
+    inputs:
+      action:
+        description: "Terraform action to run"
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
 
 # Only one Terraform workflow runs at a time to avoid concurrent state writes.
 concurrency:
@@ -34,6 +46,12 @@ permissions:
 #   2. Create the DynamoDB table "terraform-locks" (PAY_PER_REQUEST, LockID key)
 #   3. Create the Terraform IAM role (see note below on permissions)
 #   4. Set the four GitHub config values above
+#
+# Usage:
+#   - Open a PR touching terraform/**  -> validate + plan, posted as a PR comment.
+#   - Actions tab -> "Run workflow" -> action: plan/apply/destroy for a manual run.
+#     apply and destroy always run their own plan first and apply that exact
+#     saved plan file, so the job summary shows precisely what ran.
 # ---------------------------------------------------------------------------
 
 env:
@@ -45,7 +63,7 @@ env:
 jobs:
 
   # ---------------------------------------------------------------------------
-  # Lint + validate — runs on every PR and push to main
+  # Lint + validate — runs on every PR touching terraform/** and every manual dispatch
   # ---------------------------------------------------------------------------
   validate:
     name: Validate
@@ -85,13 +103,14 @@ jobs:
         run: terraform validate
 
   # ---------------------------------------------------------------------------
-  # Plan — runs on every PR; posts output to job summary for easy review
+  # Plan — every PR touching terraform/**, or a manual dispatch with action: plan.
+  # Never mutates infrastructure.
   # ---------------------------------------------------------------------------
   plan:
     name: Plan
     runs-on: ubuntu-22.04
     needs: validate
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan')
 
     steps:
       - name: Checkout
@@ -132,6 +151,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post plan as PR comment
+        if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -170,13 +190,15 @@ jobs:
         run: exit 1
 
   # ---------------------------------------------------------------------------
-  # Apply — runs only on push to main (after PR is merged)
+  # Apply — manual dispatch only (action: apply). Plans and applies that exact
+  # saved plan file in the same run, so the job summary shows precisely what
+  # was applied.
   # ---------------------------------------------------------------------------
   apply:
     name: Apply
     runs-on: ubuntu-22.04
     needs: validate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply'
 
     steps:
       - name: Checkout
@@ -203,6 +225,68 @@ jobs:
             -backend-config="dynamodb_table=terraform-locks" \
             -backend-config="encrypt=true"
 
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
+
+      - name: Post plan to job summary
+        run: |
+          echo "## Terraform Plan (about to apply)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat terraform/plan.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Terraform Apply
         working-directory: terraform
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve tfplan
+
+  # ---------------------------------------------------------------------------
+  # Destroy — manual dispatch only (action: destroy). Same plan-then-apply-the-
+  # saved-plan pattern as Apply, so the job summary shows exactly what was torn
+  # down.
+  # ---------------------------------------------------------------------------
+  destroy:
+    name: Destroy
+    runs-on: ubuntu-22.04
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.TF_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_BACKEND_BUCKET }}" \
+            -backend-config="key=${{ env.TF_BACKEND_KEY }}" \
+            -backend-config="region=${{ vars.TF_BACKEND_REGION }}" \
+            -backend-config="dynamodb_table=terraform-locks" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Plan (destroy)
+        working-directory: terraform
+        run: terraform plan -destroy -no-color -out=tfplan 2>&1 | tee plan.txt
+
+      - name: Post plan to job summary
+        run: |
+          echo "## Terraform Destroy Plan" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat terraform/plan.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform Apply (destroy)
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
