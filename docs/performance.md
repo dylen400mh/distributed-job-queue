@@ -1,9 +1,147 @@
 # Performance Requirements — Methodology & Results
 
-> Historical record from the Kafka + Kubernetes/EKS architecture (since removed —
-> see README.md, which now describes a single-EC2-host deployment). Measurements
-> and commands below (kubectl port-forward, etc.) reflect that prior setup and
-> have not been re-run against the current architecture.
+> The "Historical Record" section further down is from the Kafka +
+> Kubernetes/EKS architecture (since removed — see README.md). It's kept for
+> context but is no longer representative of what's deployed. The "Current
+> Architecture" section immediately below is the up-to-date measurement
+> against the single-EC2-host deployment that replaced it.
+
+---
+
+## Current Architecture (Single EC2 Host) — Measured 2026-09-03
+
+Measured against a fresh Terraform-provisioned deployment (RDS + ElastiCache +
+single EC2 host, no Kafka/EKS) using the same `ghz`-based methodology as the
+historical EKS measurement below, so the numbers are comparable method-for-method
+even though the topology is much smaller.
+
+### Environment
+
+| Component | Spec |
+|---|---|
+| App host | 1× `t3.small` (2 vCPU, 2 GB RAM) running `jq-server` + `jq-worker` via Docker Compose |
+| jq-server replicas | 1 |
+| jq-worker replicas | 1 (default concurrency) |
+| RDS PostgreSQL | `db.t3.medium` |
+| ElastiCache Redis | `cache.t3.micro` |
+| ghz client | macOS (Apple Silicon), ghz v0.121.0 |
+| Region | us-east-1 |
+
+### Summary
+
+| NFR | Requirement | Target | Measured | Result |
+|---|---|---|---|---|
+| NFR-001 | Job submission throughput | ≥ 1,000 jobs/s | **983.86 jobs/s** | **FAIL** (−1.6%) |
+| NFR-002 | p99 e2e latency | < 2,000 ms | **544.70 ms** at peak load | **PASS** |
+| NFR-003 | Scheduler cycle p95 | < 200 ms | **between 1,000–5,000 ms** | **FAIL** |
+
+### NFR-001 / NFR-002: `ghz` sustained load
+
+Same command as the historical run (60s, concurrency 200, insecure gRPC, direct
+against the app host's public IP on :50051):
+
+```bash
+PAYLOAD=$(echo -n '{"command":["echo","bench"]}' | base64)
+ghz --insecure \
+    --proto proto/job_service.proto --import-paths proto \
+    --call jq.JobService/SubmitJob \
+    --data "{\"queue_name\":\"default\",\"payload\":\"$PAYLOAD\"}" \
+    --concurrency 200 --duration 60s \
+    <app_public_ip>:50051
+```
+
+```
+Summary:
+  Count:        59,032
+  Total:        60.00 s
+  Slowest:      1.11 s
+  Fastest:      40.49 ms
+  Average:      202.63 ms
+  Requests/sec: 983.86
+
+Latency distribution:
+  p50:  187.40 ms
+  p90:  300.78 ms
+  p95:  351.77 ms
+  p99:  544.70 ms
+
+Status code distribution:
+  OK:          58,832 responses (99.7%)
+  Unavailable:    200 responses  (0.3%)
+```
+
+NFR-001 misses target by 1.6% — a single small app host running both
+`jq-server` and `jq-worker` (competing for the same 2 vCPU) is close to but
+below the 2-node-EKS-cluster-plus-NLB throughput the target was originally set
+against. NFR-002 passes comfortably; p99 is well under budget even at this
+load.
+
+### NFR-003: Scheduler cycle p95 — fails under this load, and why
+
+Scraped from `/metrics` on the app host immediately after the load test:
+
+```
+jq_scheduler_cycle_duration_seconds_count 165
+jq_scheduler_cycle_duration_seconds_sum   68.78
+
+le=0.005   106  (64.2%)
+le=0.01    112  (67.9%)
+le=0.05    113  (68.5%)
+le=0.25    113  (68.5%)
+le=0.5     131  (79.4%)
+le=1       137  (83.0%)
+le=5       165  (100%)
+```
+
+p95 falls between the 1s and 5s buckets — the histogram's granularity doesn't
+resolve a tighter number, but it's unambiguously well past the 200ms target
+under this load.
+
+**Root cause: this topology can't keep up with 984 submissions/s.** A queue
+depth check right after the test:
+
+```
+jq_job_queue_depth{queue="default",status="PENDING"} 50,912
+jq_job_queue_depth{queue="default",status="DONE"}      8,089
+jq_worker_active_count                                     1
+```
+
+Only ~8k of the 59k submitted jobs had been assigned and completed by the time
+the load test ended — the single worker's default concurrency can't drain a
+50k+ job backlog at anywhere close to 984/s. Every scheduler cycle during the
+test was fetching a full `batch_size=100` batch of `PENDING` jobs against an
+already-massive backlog and racing to acquire a Redis lock plus a DB
+transaction for each one *sequentially* — the scheduler's assignment loop does
+one Redis round trip and one Postgres transaction per job, one at a time, so
+its assignment throughput is capped at roughly the inverse of that per-job
+round-trip cost (measured to be on the order of 200–300 jobs/s) regardless of
+`batch_size`/`interval_ms` tuning, and independent of instance size for any
+config that leaves the loop backlogged.
+
+This is an architecture tradeoff, not a regression, and likely a direct
+consequence of removing Kubernetes: the single-EC2-host design traded the
+2-node-EKS-cluster's horizontal worker capacity (multiple `jq-worker`
+replicas draining the queue in parallel, keeping it near-empty) for lower cost
+and operational simplicity. NFR-003 as originally specified assumes the queue
+stays close to empty; that assumption doesn't hold here under sustained 1,000
+jobs/s ingest against a single default-concurrency worker and a scheduler loop
+that processes assignments one at a time rather than in a batch. Closing this
+gap for real would mean either running multiple `jq-worker` replicas again (the
+service is already stateless and designed for it) or batching the scheduler's
+per-job Redis/DB round trips — both out of scope for this measurement pass;
+config-only tuning (larger `batch_size`, shorter `interval_ms`, more DB pool
+connections, higher worker concurrency) was tried and did not resolve it, since
+none of those change the fundamentally sequential, per-job cost of the
+assignment loop itself.
+
+---
+
+## Historical Record (Kafka + Kubernetes/EKS architecture, removed)
+
+> Measurements and commands below (kubectl port-forward, etc.) reflect the
+> prior EKS/Kafka setup and have not been re-run against it — it no longer
+> exists. Kept for historical comparison against the current-architecture
+> numbers above.
 
 This document explains how each performance NFR was measured, what obstacles were encountered, and what the results mean. All measurements were taken on the live AWS EKS deployment (us-east-1).
 
