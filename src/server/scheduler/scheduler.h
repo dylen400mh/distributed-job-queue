@@ -7,7 +7,6 @@
 
 #include "common/config/config.h"
 #include "common/db/connection_pool.h"
-#include "common/kafka/kafka_producer.h"
 #include "server/db/job_repository.h"
 #include "server/scheduler/worker_registry.h"
 
@@ -44,7 +43,6 @@ class Scheduler {
 public:
     Scheduler(db::ConnectionPool& pool,
               const RedisConfig&  redis_cfg,
-              IKafkaProducer&     kafka,
               WorkerRegistry&     registry,
               const SchedulerConfig& cfg);
 
@@ -64,7 +62,6 @@ private:
     void HeartbeatMonitor();
 
     // Apply retry logic to a FAILED job.
-    // Uses job_repo and kafka directly (no state captured by value).
     void ApplyRetry(db::IJobRepository& job_repo,
                     const std::string&  job_id,
                     int                 retry_count,
@@ -72,7 +69,6 @@ private:
 
     db::ConnectionPool&   pool_;
     const RedisConfig&    redis_cfg_;
-    IKafkaProducer&       kafka_;
     WorkerRegistry&       registry_;
     SchedulerConfig       cfg_;
 

@@ -10,7 +10,6 @@
 
 #include "common/config/config.h"
 #include "common/db/connection_pool.h"
-#include "common/kafka/kafka_producer.h"
 #include "server/db/queue_repository.h"
 #include "server/db/worker_repository.h"
 #include "server/grpc/admin_service_impl.h"
@@ -57,15 +56,6 @@ public:
     MOCK_METHOD(std::vector<jq::db::WorkerRow>, ListWorkers, (), (override));
 };
 
-class MockKafkaProducer : public jq::IKafkaProducer {
-public:
-    MOCK_METHOD(void, Publish,
-                (const std::string&, const std::string&, const std::vector<uint8_t>&),
-                (override));
-    MOCK_METHOD(void, Flush, (int), (override));
-    MOCK_METHOD(bool, IsHealthy, (), (override));
-};
-
 // ---------------------------------------------------------------------------
 // Test fixture
 // ---------------------------------------------------------------------------
@@ -74,12 +64,11 @@ class AdminServiceTest : public ::testing::Test {
 protected:
     MockQueueRepository  queue_repo_;
     MockWorkerRepository worker_repo_;
-    MockKafkaProducer    kafka_;
     jq::WorkerRegistry   registry_;
     // pool_size = 0: constructor skips all connection attempts — safe for unit tests.
     jq::db::ConnectionPool pool_{"", 0};
     jq::RedisConfig      redis_cfg_{};
-    jq::AdminServiceImpl svc_{queue_repo_, worker_repo_, registry_, pool_, redis_cfg_, kafka_};
+    jq::AdminServiceImpl svc_{queue_repo_, worker_repo_, registry_, pool_, redis_cfg_};
 
     grpc::ServerContext ctx_;
 

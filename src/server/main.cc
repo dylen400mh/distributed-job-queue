@@ -12,7 +12,6 @@
 #include "common/config/flags.h"
 #include "common/db/connection_pool.h"
 #include "common/db/migrations.h"
-#include "common/kafka/kafka_producer.h"
 #include "common/logging/logger.h"
 #include "common/metrics/metrics.h"
 #include "common/redis/redis_client.h"
@@ -56,14 +55,6 @@ static bool TestRedis(const jq::RedisConfig& cfg) {
     try {
         jq::RedisClient rc(cfg);
         return rc.IsConnected();
-    } catch (...) { return false; }
-}
-
-static bool TestKafka(const jq::KafkaConfig& cfg) {
-    try {
-        jq::KafkaProducer p(cfg);
-        p.Flush(500);
-        return true;
     } catch (...) { return false; }
 }
 
@@ -126,9 +117,6 @@ int main(int argc, char** argv) {
     auto pool = std::make_unique<jq::db::ConnectionPool>(
         connstr, static_cast<std::size_t>(cfg.db.pool_size));
 
-    // ---- Kafka producer ----
-    auto kafka = std::make_unique<jq::KafkaProducer>(cfg.kafka);
-
     // ---- Redis client ----
     auto redis = std::make_unique<jq::RedisClient>(cfg.redis);
 
@@ -136,13 +124,11 @@ int main(int argc, char** argv) {
     if (flags.dry_run) {
         bool db_ok    = TestDb(cfg.db);
         bool redis_ok = TestRedis(cfg.redis);
-        bool kafka_ok = TestKafka(cfg.kafka);
 
         std::cout << "DB:    " << (db_ok    ? "OK" : "FAIL") << '\n';
         std::cout << "Redis: " << (redis_ok ? "OK" : "FAIL") << '\n';
-        std::cout << "Kafka: " << (kafka_ok ? "OK" : "FAIL") << '\n';
 
-        return (db_ok && redis_ok && kafka_ok) ? 0 : 1;
+        return (db_ok && redis_ok) ? 0 : 1;
     }
 
     // ---- DB migrations ----
@@ -155,7 +141,7 @@ int main(int argc, char** argv) {
     }
 
     // ---- Health server ----
-    jq::HealthServer health(cfg.health.port, *pool, *redis, *kafka);
+    jq::HealthServer health(cfg.health.port, *pool, *redis);
     try {
         health.Start();
     } catch (const std::exception& e) {
@@ -169,21 +155,19 @@ int main(int argc, char** argv) {
 
     // ---- gRPC server (blocks until shutdown) ----
     try {
-        jq::GrpcServer grpc_server(cfg, *pool, *kafka);
+        jq::GrpcServer grpc_server(cfg, *pool);
         g_grpc_server = &grpc_server;
         grpc_server.Start();  // blocks here
         g_grpc_server = nullptr;
     } catch (const std::exception& e) {
         LOG_ERROR("gRPC server error", {{"error", e.what()}});
         health.Stop();
-        kafka->Flush(5000);
         return 1;
     }
 
-    // ---- Graceful shutdown (design-notes.md §Graceful Shutdown) ----
+    // ---- Graceful shutdown ----
     LOG_INFO("jq-server shutting down");
     health.Stop();
-    kafka->Flush(5000);
     LOG_INFO("jq-server stopped");
     return 0;
 }

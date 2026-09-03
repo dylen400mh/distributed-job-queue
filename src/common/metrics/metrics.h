@@ -49,10 +49,6 @@ SchedulerCycleDuration();
 prometheus::Family<prometheus::Counter>&
 SchedulerJobsAssignedTotal();
 
-// jq_kafka_publish_errors_total{topic} — Counter
-prometheus::Family<prometheus::Counter>&
-KafkaPublishErrorsTotal();
-
 // jq_db_query_duration_seconds{query_name} — Histogram
 prometheus::Family<prometheus::Histogram>&
 DbQueryDuration();

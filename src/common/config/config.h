@@ -37,28 +37,6 @@ struct RedisConfig {
     int         connect_timeout_ms = 1000;
 };
 
-struct KafkaProducerConfig {
-    std::string acks        = "all";
-    std::string compression = "snappy";
-};
-
-struct KafkaConsumerConfig {
-    std::string group_id          = "jq-server";
-    std::string auto_offset_reset = "earliest";
-};
-
-struct KafkaSaslConfig {
-    std::string username;   // Set via JQ_KAFKA_SASL_USERNAME
-    std::string password;   // Set via JQ_KAFKA_SASL_PASSWORD
-};
-
-struct KafkaConfig {
-    std::vector<std::string> brokers = {"localhost:9092"};
-    KafkaProducerConfig      producer;
-    KafkaConsumerConfig      consumer;
-    KafkaSaslConfig          sasl;
-};
-
 struct SchedulerConfig {
     int interval_ms                = 500;
     int batch_size                 = 100;
@@ -87,7 +65,6 @@ struct Config {
     GrpcConfig      grpc;
     DbConfig        db;
     RedisConfig     redis;
-    KafkaConfig     kafka;
     SchedulerConfig scheduler;
     MetricsConfig   metrics;
     HealthConfig    health;

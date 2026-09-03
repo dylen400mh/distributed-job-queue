@@ -9,8 +9,6 @@
 #include <thread>
 #include <vector>
 
-#include "common.pb.h"
-#include "common/kafka/kafka_producer.h"
 #include "common/logging/logger.h"
 #include "common/metrics/metrics.h"
 #include <prometheus/histogram.h>
@@ -48,12 +46,10 @@ int64_t CalculateRetryNotBefore(int64_t now_epoch,
 
 Scheduler::Scheduler(db::ConnectionPool&    pool,
                      const RedisConfig&     redis_cfg,
-                     IKafkaProducer&        kafka,
                      WorkerRegistry&        registry,
                      const SchedulerConfig& cfg)
     : pool_(pool),
       redis_cfg_(redis_cfg),
-      kafka_(kafka),
       registry_(registry),
       cfg_(cfg) {}
 
@@ -132,20 +128,7 @@ void Scheduler::RunLoop() {
                     continue;
                 }
 
-                // 4. Publish job.submitted Kafka event.
-                try {
-                    JobEvent ev;
-                    ev.set_job_id(job.job_id);
-                    ev.set_from_status(PENDING);
-                    ev.set_to_status(ASSIGNED);
-                    ev.set_reason("ASSIGNED");
-                    std::string serialized;
-                    ev.SerializeToString(&serialized);
-                    std::vector<uint8_t> payload(serialized.begin(), serialized.end());
-                    kafka_.Publish(KafkaTopics::kJobSubmitted, job.job_id, payload);
-                } catch (...) { /* Kafka not on critical path */ }
-
-                // 5. Try to stream to a worker via WorkerRegistry.
+                // 4. Try to stream to a worker via WorkerRegistry.
                 bool streamed = registry_.AssignJob(
                     job.job_id, job.queue_name, job.payload, job.priority);
 
@@ -172,17 +155,6 @@ void Scheduler::RunLoop() {
                     if (dead) {
                         LOG_INFO("Job TTL expired",
                                  {{"job_id", job.job_id}, {"queue", job.queue_name}});
-                        try {
-                            JobEvent ev;
-                            ev.set_job_id(job.job_id);
-                            ev.set_from_status(PENDING);
-                            ev.set_to_status(DEAD_LETTERED);
-                            ev.set_reason("TTL_EXPIRED");
-                            std::string serialized;
-                            ev.SerializeToString(&serialized);
-                            std::vector<uint8_t> payload(serialized.begin(), serialized.end());
-                            kafka_.Publish(KafkaTopics::kJobDeadLettered, job.job_id, payload);
-                        } catch (...) {}
                     }
                 }
             } catch (const std::exception& e) {
@@ -298,17 +270,6 @@ void Scheduler::ApplyRetry(db::IJobRepository& job_repo,
             if (ok) {
                 LOG_INFO("Job dead-lettered",
                          {{"job_id", job_id}, {"retry_count", retry_count}});
-                try {
-                    JobEvent ev;
-                    ev.set_job_id(job_id);
-                    ev.set_from_status(FAILED);
-                    ev.set_to_status(DEAD_LETTERED);
-                    ev.set_reason("MAX_RETRIES_EXCEEDED");
-                    std::string serialized;
-                    ev.SerializeToString(&serialized);
-                    std::vector<uint8_t> payload(serialized.begin(), serialized.end());
-                    kafka_.Publish(KafkaTopics::kJobDeadLettered, job_id, payload);
-                } catch (...) {}
             }
         } catch (const std::exception& e) {
             LOG_ERROR("Dead-letter transition failed",

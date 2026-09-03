@@ -95,14 +95,6 @@ prometheus::Family<prometheus::Counter>& SchedulerJobsAssignedTotal() {
     return family;
 }
 
-prometheus::Family<prometheus::Counter>& KafkaPublishErrorsTotal() {
-    static auto& family = prometheus::BuildCounter()
-        .Name("jq_kafka_publish_errors_total")
-        .Help("Total number of Kafka publish errors by topic")
-        .Register(RegistryInstance());
-    return family;
-}
-
 prometheus::Family<prometheus::Histogram>& DbQueryDuration() {
     static auto& family = prometheus::BuildHistogram()
         .Name("jq_db_query_duration_seconds")

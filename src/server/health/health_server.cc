@@ -62,9 +62,8 @@ void SendResponse(int fd, const char* response) {
 
 HealthServer::HealthServer(int                 port,
                             db::ConnectionPool& pool,
-                            RedisClient&        redis,
-                            IKafkaProducer&     kafka)
-    : port_(port), pool_(pool), redis_(redis), kafka_(kafka) {}
+                            RedisClient&        redis)
+    : port_(port), pool_(pool), redis_(redis) {}
 
 HealthServer::~HealthServer() {
     Stop();

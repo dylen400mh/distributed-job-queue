@@ -5,7 +5,6 @@
 
 #include "common/db/connection_pool.h"
 #include "common/redis/redis_client.h"
-#include "common/kafka/kafka_producer.h"
 
 namespace jq {
 
@@ -15,14 +14,13 @@ namespace jq {
 // Runs in a background thread started by Start(); stopped by Stop().
 //
 // /healthz — always 200 OK (liveness probe)
-// /readyz  — 200 if DB, Redis, and Kafka are reachable; 503 otherwise
+// /readyz  — 200 if DB and Redis are reachable; 503 otherwise
 // ---------------------------------------------------------------------------
 class HealthServer {
 public:
     HealthServer(int                 port,
                  db::ConnectionPool& pool,
-                 RedisClient&        redis,
-                 IKafkaProducer&     kafka);
+                 RedisClient&        redis);
     ~HealthServer();
 
     // Start the background listener thread.
@@ -41,7 +39,6 @@ private:
     int                 port_;
     db::ConnectionPool& pool_;
     RedisClient&        redis_;
-    IKafkaProducer&     kafka_;
 
     std::atomic<bool>   running_{false};
     std::thread         thread_;

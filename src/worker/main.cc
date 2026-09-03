@@ -32,7 +32,7 @@ static void SignalHandler(int /*sig*/) {
 
 // ---------------------------------------------------------------------------
 // Minimal health server for jq-worker.
-// Worker has no DB/Redis/Kafka deps; always returns 200 OK.
+// Worker has no DB/Redis deps; always returns 200 OK.
 // ---------------------------------------------------------------------------
 static void RunHealthServer(int port) {
     int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);

@@ -1,7 +1,6 @@
 #include "common/config/config.h"
 
 #include <cstdlib>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -34,16 +33,6 @@ bool EnvBool(const char* name, bool def) {
     if (!v || !*v) return def;
     std::string s(v);
     return s == "1" || s == "true" || s == "yes";
-}
-
-std::vector<std::string> SplitComma(const std::string& s) {
-    std::vector<std::string> parts;
-    std::istringstream ss(s);
-    std::string part;
-    while (std::getline(ss, part, ',')) {
-        if (!part.empty()) parts.push_back(part);
-    }
-    return parts;
 }
 
 }  // namespace
@@ -92,27 +81,6 @@ Config LoadConfig(const std::string& path) {
         if (r["connect_timeout_ms"]) cfg.redis.connect_timeout_ms = r["connect_timeout_ms"].as<int>();
     }
 
-    // -- kafka ---------------------------------------------------------------
-    if (auto k = y["kafka"]) {
-        if (k["brokers"]) {
-            cfg.kafka.brokers.clear();
-            for (const auto& b : k["brokers"])
-                cfg.kafka.brokers.push_back(b.as<std::string>());
-        }
-        if (auto p = k["producer"]) {
-            if (p["acks"])        cfg.kafka.producer.acks        = p["acks"].as<std::string>();
-            if (p["compression"]) cfg.kafka.producer.compression = p["compression"].as<std::string>();
-        }
-        if (auto c = k["consumer"]) {
-            if (c["group_id"])          cfg.kafka.consumer.group_id          = c["group_id"].as<std::string>();
-            if (c["auto_offset_reset"]) cfg.kafka.consumer.auto_offset_reset = c["auto_offset_reset"].as<std::string>();
-        }
-        if (auto s = k["sasl"]) {
-            if (s["username"]) cfg.kafka.sasl.username = s["username"].as<std::string>();
-            if (s["password"]) cfg.kafka.sasl.password = s["password"].as<std::string>();
-        }
-    }
-
     // -- scheduler -----------------------------------------------------------
     if (auto s = y["scheduler"]) {
         if (s["interval_ms"])                cfg.scheduler.interval_ms               = s["interval_ms"].as<int>();
@@ -145,8 +113,6 @@ Config LoadConfig(const std::string& path) {
     };
     warn_if_in_yaml(cfg.db.password,        "JQ_DB_PASSWORD",        "db.password");
     warn_if_in_yaml(cfg.redis.password,     "JQ_REDIS_PASSWORD",     "redis.password");
-    warn_if_in_yaml(cfg.kafka.sasl.username,"JQ_KAFKA_SASL_USERNAME","kafka.sasl.username");
-    warn_if_in_yaml(cfg.kafka.sasl.password,"JQ_KAFKA_SASL_PASSWORD","kafka.sasl.password");
 
     // -------------------------------------------------------------------------
     // Environment variable overrides — JQ_* env vars take precedence over YAML.
@@ -167,13 +133,6 @@ Config LoadConfig(const std::string& path) {
     //   JQ_REDIS_PASSWORD                   -> redis.password
     //   JQ_REDIS_DB                         -> redis.db
     //   JQ_REDIS_CONNECT_TIMEOUT_MS         -> redis.connect_timeout_ms
-    //   JQ_KAFKA_BROKERS                    -> kafka.brokers (comma-separated)
-    //   JQ_KAFKA_PRODUCER_ACKS              -> kafka.producer.acks
-    //   JQ_KAFKA_PRODUCER_COMPRESSION       -> kafka.producer.compression
-    //   JQ_KAFKA_CONSUMER_GROUP_ID          -> kafka.consumer.group_id
-    //   JQ_KAFKA_CONSUMER_AUTO_OFFSET_RESET -> kafka.consumer.auto_offset_reset
-    //   JQ_KAFKA_SASL_USERNAME              -> kafka.sasl.username
-    //   JQ_KAFKA_SASL_PASSWORD              -> kafka.sasl.password
     //   JQ_SCHEDULER_INTERVAL_MS            -> scheduler.interval_ms
     //   JQ_SCHEDULER_BATCH_SIZE             -> scheduler.batch_size
     //   JQ_SCHEDULER_ASSIGNMENT_TIMEOUT_S   -> scheduler.assignment_timeout_s
@@ -202,17 +161,6 @@ Config LoadConfig(const std::string& path) {
     cfg.redis.db                 = EnvInt("JQ_REDIS_DB",              cfg.redis.db);
     cfg.redis.connect_timeout_ms = EnvInt("JQ_REDIS_CONNECT_TIMEOUT_MS", cfg.redis.connect_timeout_ms);
 
-    {
-        const std::string brokers = Env("JQ_KAFKA_BROKERS", "");
-        if (!brokers.empty()) cfg.kafka.brokers = SplitComma(brokers);
-    }
-    cfg.kafka.producer.acks              = Env("JQ_KAFKA_PRODUCER_ACKS",              cfg.kafka.producer.acks);
-    cfg.kafka.producer.compression       = Env("JQ_KAFKA_PRODUCER_COMPRESSION",       cfg.kafka.producer.compression);
-    cfg.kafka.consumer.group_id          = Env("JQ_KAFKA_CONSUMER_GROUP_ID",          cfg.kafka.consumer.group_id);
-    cfg.kafka.consumer.auto_offset_reset = Env("JQ_KAFKA_CONSUMER_AUTO_OFFSET_RESET", cfg.kafka.consumer.auto_offset_reset);
-    cfg.kafka.sasl.username              = Env("JQ_KAFKA_SASL_USERNAME",              cfg.kafka.sasl.username);
-    cfg.kafka.sasl.password              = Env("JQ_KAFKA_SASL_PASSWORD",              cfg.kafka.sasl.password);
-
     cfg.scheduler.interval_ms                = EnvInt("JQ_SCHEDULER_INTERVAL_MS",          cfg.scheduler.interval_ms);
     cfg.scheduler.batch_size                 = EnvInt("JQ_SCHEDULER_BATCH_SIZE",            cfg.scheduler.batch_size);
     cfg.scheduler.assignment_timeout_s       = EnvInt("JQ_SCHEDULER_ASSIGNMENT_TIMEOUT_S",  cfg.scheduler.assignment_timeout_s);
@@ -240,8 +188,6 @@ std::vector<std::string> ValidateConfig(const Config& cfg) {
         errors.push_back("db.user is required (or JQ_DB_USER)");
     if (cfg.redis.addr.empty())
         errors.push_back("redis.addr is required (or JQ_REDIS_ADDR)");
-    if (cfg.kafka.brokers.empty())
-        errors.push_back("kafka.brokers is required (or JQ_KAFKA_BROKERS)");
     if (cfg.grpc.port <= 0 || cfg.grpc.port > 65535)
         errors.push_back("grpc.port must be in range 1–65535");
     if (cfg.scheduler.batch_size <= 0)

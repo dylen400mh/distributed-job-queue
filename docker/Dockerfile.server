@@ -31,8 +31,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpqxx-dev \
     # Redis client
     libhiredis-dev \
-    # Kafka client
-    librdkafka-dev \
     # Utilities
     libboost-dev \
     libboost-filesystem-dev \
@@ -79,7 +77,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libprotobuf23 \
     libpqxx-6.4 \
     libhiredis0.14 \
-    librdkafka++1 \
     libabsl20210324 \
     libspdlog1 \
     libyaml-cpp0.7 \

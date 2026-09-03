@@ -4,8 +4,8 @@
 # config.local.yaml is gitignored; never commit real credentials.
 #
 # All values can be overridden by JQ_<UPPER_KEY> environment variables.
-# Secrets (db.password, redis.password, kafka.sasl.*) should always come
-# from env vars, never from a committed config file.
+# Secrets (db.password, redis.password) should always come from env vars,
+# never from a committed config file.
 #
 # Usage (local dev, with Docker Compose backing services):
 #   docker compose up -d
@@ -32,16 +32,6 @@ redis:
   password: ""             # Set via JQ_REDIS_PASSWORD if Redis auth is enabled
   db: 0
   connect_timeout_ms: 1000
-
-kafka:
-  brokers:
-    - localhost:19092      # Redpanda external listener (Docker Compose default)
-  producer:
-    acks: all
-    compression: snappy
-  consumer:
-    group_id: jq-server
-    auto_offset_reset: earliest
 
 scheduler:
   interval_ms: 500
