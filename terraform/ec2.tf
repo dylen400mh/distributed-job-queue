@@ -23,6 +23,13 @@ resource "aws_instance" "app" {
   iam_instance_profile        = aws_iam_instance_profile.app.name
   associate_public_ip_address = true
 
+  # Perf-test workloads can burst well past t3's baseline CPU; "unlimited"
+  # bursts past the credit balance for a small per-vCPU-hour surcharge
+  # instead of throttling to baseline once credits run out.
+  credit_specification {
+    cpu_credits = "unlimited"
+  }
+
   user_data = templatefile("${path.module}/templates/app_user_data.sh.tftpl", {
     region         = var.region
     ecr_server_url = aws_ecr_repository.jq_server.repository_url

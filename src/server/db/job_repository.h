@@ -49,11 +49,10 @@ class IJobRepository {
 public:
     virtual ~IJobRepository() = default;
 
-    // Returns true if a queue with the given name exists.
-    virtual bool QueueExists(const std::string& queue_name) = 0;
-
-    // Returns the max_retries configured for the queue, or 3 on error.
-    virtual int GetQueueMaxRetries(const std::string& queue_name) = 0;
+    // Returns the queue's max_retries, or nullopt if the queue does not
+    // exist. Used by SubmitJob to validate the queue and resolve max_retries
+    // in a single DB round trip (the submit hot path).
+    virtual std::optional<int> LookupQueueMaxRetries(const std::string& queue_name) = 0;
 
     // Insert a new job row (status=PENDING) and an initial job_event row
     // (from_status=NULL, to_status=PENDING) in the same transaction.
@@ -131,8 +130,7 @@ class JobRepository : public Repository, public IJobRepository {
 public:
     explicit JobRepository(ConnectionPool& pool) : Repository(pool) {}
 
-    bool QueueExists(const std::string& queue_name) override;
-    int  GetQueueMaxRetries(const std::string& queue_name) override;
+    std::optional<int> LookupQueueMaxRetries(const std::string& queue_name) override;
 
     std::string InsertJob(const std::string&         queue_name,
                            const std::vector<uint8_t>& payload,
@@ -172,6 +170,17 @@ public:
                          const std::vector<uint8_t>& result,
                          const std::string&          error_message,
                          const std::string&          worker_id) override;
+
+    // Batched version of TransitionJobStatus: transitions many jobs in a
+    // single UPDATE + single job_events INSERT instead of one round trip per
+    // job. Returns the subset of job_ids that were actually transitioned
+    // (others lost a race to a concurrent server replica). Not part of
+    // IJobRepository -- only the scheduler's hot path uses it.
+    std::vector<std::string> TransitionJobsBatch(
+        const std::vector<std::string>& job_ids,
+        const std::string&              expected_from_status,
+        const std::string&              new_status,
+        const std::string&              reason);
 };
 
 }  // namespace jq::db

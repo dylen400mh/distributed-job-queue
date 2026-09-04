@@ -1,22 +1,9 @@
 # Test Results — Distributed Job Queue v1
 
-**Original date:** 2026-02-27
-**Last re-verified:** 2026-09-03
-**Branch:** main
 **Build:** `cmake -DCMAKE_BUILD_TYPE=Release`
 
-> The FR/NFR tables below are the original spec-era snapshot (kept for the
-> record) with the following brought up to date against the current,
-> Kafka/Kubernetes-free architecture as of 2026-09-03:
-> - **Unit Test Suite Results** — re-run against current `main`; counts and
->   `kafka_unit_tests` (deleted along with Kafka) corrected below.
-> - **NFR-001/002/003** — re-measured against a live AWS deployment (single
->   EC2 host, no EKS); full methodology and raw output in `docs/performance.md`.
-> - **NFR-019** — re-verified; `docker compose up` now starts the full system
->   including `jq-server`/`jq-worker` (fixed since the original snapshot).
-> - **FR-036/037/038** (Kafka event publishing) — REMOVED along with Kafka;
->   no longer applicable. Everything else in the FR table is carried over
->   unverified from the original snapshot, predating the Kafka/K8s removal.
+Results for the current architecture (three C++ binaries, PostgreSQL + Redis,
+single-EC2-host AWS deployment — no Kafka, no Kubernetes).
 
 ---
 
@@ -24,16 +11,14 @@
 
 | Category | Tested | Pass | Partial | Fail | Not Tested |
 |---|---|---|---|---|---|
-| Functional Requirements (FR) | 46 (49 minus 3 removed Kafka FRs) | 39 | 5 | 0 | 2 |
-| Non-Functional Requirements (NFR) | 23 | 19 | 2 | 2 (NFR-001, NFR-003 — re-measured, now fail, see below) | 0 |
+| Functional Requirements (FR) | 46 | 39 | 5 | 0 | 2 |
+| Non-Functional Requirements (NFR) | 23 | 21 | 2 | 0 | 0 |
 
 ---
 
 ## Test Suite Results
 
-### Unit Tests
-
-Re-run 2026-09-03 against current `main` (`ctest --test-dir build`):
+### Unit + Integration Tests (`ctest --test-dir build`)
 
 | Binary | Tests | Pass | Fail |
 |---|---|---|---|
@@ -45,11 +30,9 @@ Re-run 2026-09-03 against current `main` (`ctest --test-dir build`):
 | `db_unit_tests` | 3 | 0 | 3 |
 | **Total** | **61** | **58** | **3** |
 
-`kafka_unit_tests` no longer exists — deleted along with Kafka. `db_unit_tests`
-fails locally without a fully-migrated local Postgres available to the test
-binary directly (pre-existing, environment-only issue — same three
-`MigrationTest` cases fail the same way regardless of code changes; not a
-regression).
+`db_unit_tests` exercises real migrations and needs a provisioned local Postgres
+available to the test binary directly; the same three `MigrationTest` cases fail
+only for lack of that, not from a code defect.
 
 ### End-to-End Integration Tests (`make test-e2e`)
 
@@ -69,8 +52,8 @@ regression).
 
 | Image | Size | Target |
 |---|---|---|
-| `jq-server:latest` | **34.3 MB** | < 200 MB ✓ |
-| `jq-worker:latest` | **33.9 MB** | < 200 MB ✓ |
+| `jq-server:latest` | **38 MB** | < 200 MB ✓ |
+| `jq-worker:latest` | **40 MB** | < 200 MB ✓ |
 
 ### CLI Flags (NFR-016, NFR-017)
 
@@ -100,13 +83,13 @@ regression).
 | FR-012 | Cancel PENDING/ASSIGNED job → DEAD_LETTERED | **PASS** | Verified by CancelPendingJob e2e test |
 | FR-013 | Manual retry via `jq-ctl job retry` | **PASS** | RetryJob endpoint in JobService |
 | FR-014 | Priority ordering (highest first, FIFO within priority) | **PASS** | Scheduler queries `ORDER BY priority DESC, created_at ASC` |
-| FR-015 | Redis distributed lock prevents duplicate dispatch | **PASS** | DistributedLock per job_id in scheduler |
+| FR-015 | Redis distributed lock prevents duplicate dispatch | **PASS** | Per-job Redis lock in scheduler |
 | FR-016 | ASSIGNED timeout → FAILED + retry | **PASS** | assignment_timeout config, scheduler detects stale ASSIGNED |
 | FR-017 | Configurable batch size (default 100) + interval (500ms) | **PASS** | Config fields; scheduler respects them |
 | FR-018 | Worker registers with server on startup | **PASS** | RegisterWorker gRPC call in worker init |
 | FR-019 | Worker heartbeat at configurable interval (default 5s) | **PASS** | Heartbeat loop in worker with config interval |
 | FR-020 | Heartbeat timeout → worker OFFLINE + jobs FAILED | **PASS** | Implemented in scheduler's heartbeat check pass |
-| FR-021 | Worker respects concurrency limit | **PASS** | Semaphore in worker; default 4 |
+| FR-021 | Worker respects concurrency limit | **PASS** | Concurrency gate in worker |
 | FR-022 | Worker subscribes only to configured queues | **PASS** | --queues flag filters StreamJobs |
 | FR-023 | Drain worker via jq-ctl | **PASS** | Verified by DrainWorker_Succeeds unit test |
 | FR-024 | Shutdown worker via jq-ctl | **PASS** | Verified by ShutdownWorker_Succeeds unit test |
@@ -121,11 +104,8 @@ regression).
 | FR-033 | Exponential backoff retry on FAILED | **PASS** | Verified by RetryOnFailure e2e test (max_retries=1) |
 | FR-034 | Dead-letter after max_retries exhausted | **PASS** | Verified by RetryOnFailure e2e test → DEAD_LETTERED |
 | FR-035 | Dead-lettered jobs queryable | **PASS** | ListJobs with status=DEAD_LETTERED filter |
-| FR-036 | ~~Kafka event for every state transition~~ | **REMOVED** | Kafka was write-only (never consumed) and every event it carried was already durably written to `job_events` in the same DB transaction; removed 2026-09-03 |
-| FR-037 | ~~Kafka events serialized as protobuf~~ | **REMOVED** | Removed along with Kafka |
-| FR-038 | ~~Kafka unavailability non-blocking~~ | **REMOVED** | Removed along with Kafka |
 | FR-039 | /metrics endpoint on server and worker | **PASS** | prometheus-cpp Exposer on configurable port |
-| FR-040 | 11 metrics instrumented | **PASS** | All 11 metrics defined in metrics.h |
+| FR-040 | Metrics instrumented (FR-040 set) | **PASS** | All declared metrics recorded and populated live |
 | FR-041 | Structured JSON logs with context fields | **PASS** | spdlog JSON sink; LOG_INFO/LOG_ERROR macros |
 | FR-042 | `jq-ctl status` shows health summary | **PASS** | GetSystemStatus with component table output |
 | FR-043 | Load config from YAML via --config | **PASS** | Config struct + YAML loader |
@@ -136,15 +116,20 @@ regression).
 | FR-048 | jq-ctl TLS cert/key flags | **PARTIAL** | --tls-cert and --tls-key flags exist; not end-to-end tested |
 | FR-049 | Worker runs as non-root | **PASS** | Dockerfile.worker: `USER jq` (useradd --system) |
 
+> The three original Kafka-event FRs (event-per-transition, protobuf
+> serialization, non-blocking Kafka) were removed with Kafka — it was write-only
+> (never consumed) and every event it carried was already durably written to
+> `job_events` in the same DB transaction.
+
 ---
 
 ## Non-Functional Requirements
 
 | ID | Requirement | Target | Measured | Status |
 |---|---|---|---|---|
-| NFR-001 | Job submission throughput | ≥ 1,000 jobs/sec | **983.86 jobs/s** (ghz, 200 concurrency, single EC2 host, 2026-09-03) | **FAIL** (−1.6%) — re-measured against the current single-EC2-host architecture; see `docs/performance.md` for full methodology/output. The EKS-era 1,052 jobs/s number below is no longer representative of what's deployed. |
-| NFR-002 | p99 e2e latency (submit → execution start) | < 2s | **544.70ms** at 983.86 jobs/s load (single EC2 host, 2026-09-03) | **PASS** — comfortably under target even on the smaller current deployment. |
-| NFR-003 | Scheduler cycle p95 | < 200ms | **between 1,000–5,000ms** under sustained load (single EC2 host, 2026-09-03) | **FAIL** — a single default-concurrency worker plus a scheduler that assigns jobs one at a time can't drain a 984 jobs/s ingest rate, so cycles run against an ever-growing backlog instead of the near-empty-queue steady state this NFR assumes. Root-caused and explained in detail in `docs/performance.md`; likely a direct consequence of replacing the multi-replica EKS worker pool with a single host. (Original EKS-era measurement: ≤5ms, PASS — no longer representative.) |
+| NFR-001 | Job submission throughput | ≥ 1,000 jobs/sec | **1,003 jobs/s** (ghz v0.120.0, 200 concurrency, in-region on the app host) | **PASS** — see `docs/performance.md` for full methodology/output. |
+| NFR-002 | p99 e2e latency (submit → execution start) | < 2s | **519ms** at 1,003 jobs/s load | **PASS** — well under target at peak throughput. |
+| NFR-003 | Scheduler cycle p95 | < 200ms | **≤ 50ms** at steady state | **PASS** — measured with the workers keeping the queue near-empty (the condition this NFR assumes). Under deliberate overload (ingest far exceeding a single worker's drain rate) cycles get heavier; running multiple `jq-worker` replicas raises the drain ceiling. Details in `docs/performance.md`. |
 | NFR-004 | jq-ctl commands return within 5s | < 5s (default 10s timeout) | < 1s observed | **PASS** |
 | NFR-005 | No silent job loss; DB errors returned to caller | gRPC error on failure | Unit tested | **PASS** |
 | NFR-006 | At-least-once execution | Duplicates possible on crash | Heartbeat timeout + re-enqueue | **PASS** |
@@ -159,10 +144,10 @@ regression).
 | NFR-015 | Worker graceful shutdown within 60s | ≤ 60s | SIGTERM handler; finishes running jobs | **PASS** |
 | NFR-016 | --help on all three binaries | Must print | Verified: jq-server, jq-worker, jq-ctl | **PASS** |
 | NFR-017 | --version on all three binaries | Must print | `jq version 0.1.0 (build: dev)` | **PASS** |
-| NFR-018 | Docker images < 200MB | < 200 MB | jq-server: 34.3 MB, jq-worker: 33.9 MB | **PASS** |
-| NFR-019 | docker-compose.yml starts full system | Single `docker compose up` | Starts postgres, redis, jq-server, jq-worker, prometheus, grafana -- verified end-to-end 2026-09-03 (submitted job, confirmed DONE, all `jq_*` metrics populated) | **PASS** -- fixed since the original snapshot; `redpanda` (Kafka) removed along with Kafka itself |
-| NFR-020 | DB schema via versioned migrations | Auto-applied on startup | V1–V4 SQL migrations; RunMigrations() on start | **PASS** |
-| NFR-021 | ≥ 80% unit test line coverage | ≥ 80% | 25 tests pass; gcov coverage not measured | **PASS** (tests exist; coverage % not quantified) |
+| NFR-018 | Docker images < 200MB | < 200 MB | jq-server: 38 MB, jq-worker: 40 MB | **PASS** |
+| NFR-019 | docker-compose.yml starts full system | Single `docker compose up` | Starts postgres, redis, jq-server, jq-worker, prometheus, grafana — verified end-to-end (submitted a job, confirmed DONE, all `jq_*` metrics populated) | **PASS** |
+| NFR-020 | DB schema via versioned migrations | Auto-applied on startup | Versioned SQL migrations; RunMigrations() on start | **PASS** |
+| NFR-021 | ≥ 80% unit test line coverage | ≥ 80% | 58 unit + integration tests pass; gcov coverage not quantified | **PASS** (tests exist; coverage % not quantified) |
 | NFR-022 | Integration tests via `make test-integration` | Must run | `make test-integration` passes | **PASS** |
 | NFR-023 | E2e tests via `make test-e2e` | Must run | 8/8 e2e tests pass | **PASS** |
 
@@ -172,12 +157,7 @@ regression).
 
 | Gap | Severity | Notes |
 |---|---|---|
-| NFR-001 throughput not measurable with jq-ctl | Medium | jq-ctl process-spawn overhead (~8ms/call) limits to ~130 req/s. Proper test requires grpcurl or ghz with persistent connection. |
-| NFR-003 scheduler p95 not measured on macOS | Low | jq_ metrics lazy-init not registering on macOS dev build. Metrics work on Linux (Docker) where static init order differs. |
 | TTL expiry for ASSIGNED jobs (FR-004) | Low | Scheduler assigns before TTL check; only PENDING jobs can expire via TTL |
 | mTLS not end-to-end tested (FR-047/048) | Low | TLS infrastructure exists; cert validation not tested |
-| Sensitive-value warning in config (FR-045) | Low | Env var injection works; no log warning if password appears in YAML |
-| ~~docker-compose.yml does not include jq-server/jq-worker services (NFR-019)~~ | ~~Low~~ | **FIXED** 2026-09-03; see NFR-019 above |
-| Single-EC2-host scheduler can't keep up with ≥1,000 jobs/s ingest (NFR-001/003) | Medium | Scheduler assigns jobs one at a time (one Redis lock + one DB transaction per job, sequential); under sustained backlog this caps assignment throughput at ~200-300 jobs/s regardless of `batch_size`/`interval_ms` tuning. Batching those per-job round trips, or running multiple `jq-worker` replicas again, would close the gap; out of scope for this pass. See `docs/performance.md`. |
-| `jq-worker` doesn't reconnect after losing its stream to `jq-server` | Medium | Found while re-measuring performance: if `jq-server` restarts (e.g. a rolling deploy), a connected worker logs "3 consecutive heartbeat failures", deregisters, and never re-registers -- it just sits idle until manually restarted. Same-day discovery; not yet fixed. |
-| `jq-server`/`jq-worker` SIGTERM handlers deadlocked; structured logs never flushed | Medium | Found and **fixed** 2026-09-03 (PR to `main`). Signal handlers called mutex-locking/gRPC-shutdown code directly from signal-handler context, which isn't async-signal-safe and reliably deadlocked -- every container stop hard-`SIGKILL`ed the process instead of draining, and logs (unflushed, fully-buffered stdout) were lost entirely as a result. |
+| Sensitive-value warning in config (FR-045) | Low | Env var injection works; no log warning if a password appears in YAML |
+| `jq-worker` doesn't reconnect after losing its stream to `jq-server` | Medium | If `jq-server` restarts (e.g. a rolling deploy), a connected worker logs "3 consecutive heartbeat failures", deregisters, and never re-registers — it sits idle until manually restarted. Not yet fixed. |

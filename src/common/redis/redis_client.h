@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 // Forward-declare hiredis context to avoid pulling the header into every TU.
 struct redisContext;
@@ -48,6 +49,14 @@ public:
     bool SetNxPx(const std::string& key,
                  const std::string& value,
                  int64_t            ttl_ms) override;
+
+    // SET NX PX for many keys, pipelined over a single round trip (instead of
+    // one round trip per key). Returns the subset of keys that were
+    // successfully locked. Not part of IRedisLockable -- only the
+    // scheduler's hot path uses it.
+    std::vector<std::string> SetNxPxBatch(const std::vector<std::string>& keys,
+                                           const std::string&              value,
+                                           int64_t                         ttl_ms);
 
     // DEL key
     void Del(const std::string& key) override;

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -47,28 +48,23 @@ grpc::Status JobServiceImpl::SubmitJob(grpc::ServerContext*    /*ctx*/,
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "queue_name is required");
     }
 
-    // FR-006: reject submissions to non-existent queues.
-    bool exists = false;
+    // FR-006: reject submissions to non-existent queues, and resolve the
+    // queue's max_retries — both in a single DB round trip (the queue row
+    // existing proves the queue exists and carries max_retries).
+    std::optional<int> queue_max_retries;
     try {
-        exists = repo_.QueueExists(req->queue_name());
+        queue_max_retries = repo_.LookupQueueMaxRetries(req->queue_name());
     } catch (const std::exception& e) {
-        LOG_ERROR("SubmitJob: QueueExists DB error", {{"error", e.what()}});
+        LOG_ERROR("SubmitJob: LookupQueueMaxRetries DB error", {{"error", e.what()}});
         return grpc::Status(grpc::StatusCode::INTERNAL, "database error");
     }
-    if (!exists) {
+    if (!queue_max_retries) {
         return grpc::Status(grpc::StatusCode::NOT_FOUND,
                             "queue '" + req->queue_name() + "' not found");
     }
 
-    // Resolve max_retries: use queue default if caller omitted (0).
-    int max_retries = req->max_retries();
-    if (max_retries <= 0) {
-        try {
-            max_retries = repo_.GetQueueMaxRetries(req->queue_name());
-        } catch (...) {
-            max_retries = 3;
-        }
-    }
+    // Use the caller's max_retries if provided (>0), else the queue default.
+    int max_retries = req->max_retries() > 0 ? req->max_retries() : *queue_max_retries;
 
     // Convert payload bytes → uint8_t vector
     const std::string& pb = req->payload();

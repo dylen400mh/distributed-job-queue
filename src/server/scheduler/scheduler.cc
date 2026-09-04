@@ -7,6 +7,8 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "common/logging/logger.h"
@@ -94,60 +96,105 @@ void Scheduler::RunLoop() {
             // 1. Fetch PENDING jobs.
             auto jobs = job_repo.FetchPendingBatch(cfg_.batch_size);
 
-            for (const auto& job : jobs) {
-                if (!running_) break;
-
-                // 2. Try to acquire Redis distributed lock.
-                const std::string lock_key = "job:" + job.job_id;
-                const int64_t     lock_ttl = static_cast<int64_t>(cfg_.assignment_timeout_s) * 1000;
-                bool acquired = false;
-                try {
-                    acquired = redis.SetNxPx(lock_key, "1", lock_ttl);
-                } catch (const std::exception& e) {
-                    // Redis unavailable — fall back to single-instance mode (skip lock).
-                    LOG_WARN("Redis unavailable; proceeding without lock",
-                             {{"job_id", job.job_id}, {"error", e.what()}});
-                    acquired = true;
+            if (!jobs.empty() && running_) {
+                std::unordered_map<std::string, const db::JobRow*> by_id;
+                by_id.reserve(jobs.size());
+                std::vector<std::string> lock_keys;
+                lock_keys.reserve(jobs.size());
+                for (const auto& job : jobs) {
+                    by_id[job.job_id] = &job;
+                    lock_keys.push_back("job:" + job.job_id);
                 }
 
-                if (!acquired) continue;  // another instance claimed it
-
-                // 3. Transition PENDING → ASSIGNED in DB.
-                bool ok = false;
-                try {
-                    ok = job_repo.TransitionJobStatus(
-                        job.job_id, "PENDING", "ASSIGNED", "ASSIGNED");
-                } catch (const std::exception& e) {
-                    LOG_ERROR("TransitionJobStatus failed",
-                              {{"job_id", job.job_id}, {"error", e.what()}});
-                    redis.Del(lock_key);
-                    continue;
-                }
-                if (!ok) {
-                    // Concurrent claim — release lock and skip.
-                    redis.Del(lock_key);
-                    continue;
-                }
-
-                // 4. Try to stream to a worker via WorkerRegistry.
-                bool streamed = registry_.AssignJob(
-                    job.job_id, job.queue_name, job.payload, job.priority);
-
-                if (streamed) {
-                    metrics::SchedulerJobsAssignedTotal()
-                        .Add({{"queue", job.queue_name}})
-                        .Increment();
-                    LOG_INFO("Job assigned",
-                             {{"job_id", job.job_id}, {"queue", job.queue_name}});
+                // 2. Acquire Redis distributed locks for the whole batch in
+                // one pipelined round trip instead of one call per job.
+                // SetNxPxBatch never throws -- like every other RedisClient
+                // method it swallows hiredis errors internally -- so detect
+                // a genuine outage via IsConnected() rather than a catch
+                // block that could never fire, and skip locking (not skip
+                // assignment) for the documented single-instance fallback.
+                const int64_t lock_ttl =
+                    static_cast<int64_t>(cfg_.assignment_timeout_s) * 1000;
+                std::vector<std::string> locked_ids;
+                locked_ids.reserve(jobs.size());
+                if (redis.IsConnected()) {
+                    std::unordered_set<std::string> acquired_keys;
+                    for (auto& key : redis.SetNxPxBatch(lock_keys, "1", lock_ttl)) {
+                        acquired_keys.insert(std::move(key));
+                    }
+                    for (const auto& job : jobs) {
+                        if (acquired_keys.count("job:" + job.job_id)) {
+                            locked_ids.push_back(job.job_id);
+                        }
+                    }
                 } else {
-                    // No worker available — job stays ASSIGNED; the assignment
-                    // timeout (lock TTL) will expire and the scheduler retries.
-                    LOG_DEBUG("No worker available for job",
-                              {{"job_id", job.job_id}, {"queue", job.queue_name}});
+                    LOG_WARN("Redis unavailable; proceeding without locks", {});
+                    for (const auto& job : jobs) locked_ids.push_back(job.job_id);
+                }
+
+                if (!locked_ids.empty()) {
+                    // 3. Transition PENDING → ASSIGNED for the whole batch in
+                    // one UPDATE + one job_events INSERT.
+                    std::vector<std::string> transitioned;
+                    try {
+                        transitioned = job_repo.TransitionJobsBatch(
+                            locked_ids, "PENDING", "ASSIGNED", "ASSIGNED");
+                    } catch (const std::exception& e) {
+                        LOG_ERROR("TransitionJobsBatch failed", {{"error", e.what()}});
+                    }
+
+                    // Release locks for jobs that didn't actually transition
+                    // (lost a race to a concurrent server replica, or the
+                    // batch transition failed outright).
+                    if (transitioned.size() != locked_ids.size()) {
+                        std::unordered_set<std::string> ok(transitioned.begin(),
+                                                             transitioned.end());
+                        for (const auto& id : locked_ids) {
+                            if (!ok.count(id)) redis.Del("job:" + id);
+                        }
+                    }
+
+                    // 4. Stream each transitioned job to a worker via
+                    // WorkerRegistry — in-process, no network round trip, so
+                    // this stays a per-job loop.
+                    std::vector<std::string> not_streamed;
+                    for (const auto& id : transitioned) {
+                        const db::JobRow* job = by_id[id];
+                        bool streamed = registry_.AssignJob(
+                            job->job_id, job->queue_name, job->payload, job->priority);
+
+                        if (streamed) {
+                            metrics::SchedulerJobsAssignedTotal()
+                                .Add({{"queue", job->queue_name}})
+                                .Increment();
+                            LOG_INFO("Job assigned",
+                                     {{"job_id", job->job_id}, {"queue", job->queue_name}});
+                        } else {
+                            not_streamed.push_back(id);
+                        }
+                    }
+
+                    // No worker had a free concurrency slot for these —
+                    // revert to PENDING and release their locks so the next
+                    // cycle retries immediately, rather than leaving them
+                    // stuck in ASSIGNED with no worker_id (nothing else ever
+                    // revisits an ASSIGNED job that isn't tied to a worker).
+                    if (!not_streamed.empty()) {
+                        LOG_DEBUG("No worker available; reverting to PENDING",
+                                  {{"count", static_cast<int>(not_streamed.size())}});
+                        try {
+                            job_repo.TransitionJobsBatch(
+                                not_streamed, "ASSIGNED", "PENDING", "NO_WORKER_AVAILABLE");
+                        } catch (const std::exception& e) {
+                            LOG_ERROR("Reverting unassigned jobs to PENDING failed",
+                                      {{"error", e.what()}});
+                        }
+                        for (const auto& id : not_streamed) redis.Del("job:" + id);
+                    }
                 }
             }
 
-            // 6. Expire TTL-exceeded PENDING jobs.
+            // 5. Expire TTL-exceeded PENDING jobs.
             try {
                 auto expired = job_repo.FetchExpiredTtlJobs();
                 for (const auto& job : expired) {
