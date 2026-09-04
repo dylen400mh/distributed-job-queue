@@ -78,21 +78,12 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.TF_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Terraform Init
+      # fmt + validate are static, offline checks. Init without the backend so
+      # this gate needs no AWS credentials or remote state — it runs on every
+      # PR regardless of whether the deployment secrets/vars are configured.
+      - name: Terraform Init (no backend)
         working-directory: terraform
-        run: |
-          terraform init \
-            -backend-config="bucket=${{ vars.TF_BACKEND_BUCKET }}" \
-            -backend-config="key=${{ env.TF_BACKEND_KEY }}" \
-            -backend-config="region=${{ vars.TF_BACKEND_REGION }}" \
-            -backend-config="dynamodb_table=terraform-locks" \
-            -backend-config="encrypt=true"
+        run: terraform init -backend=false
 
       - name: Terraform Format Check
         working-directory: terraform
