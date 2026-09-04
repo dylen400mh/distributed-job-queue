@@ -95,13 +95,20 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Plan — every PR touching terraform/**, or a manual dispatch with action: plan.
-  # Never mutates infrastructure.
+  # Never mutates infrastructure. Needs real AWS credentials + remote state, so
+  # it's gated on the deployment vars being configured; when they aren't, it
+  # skips cleanly instead of failing the PR (unlike fmt/validate, plan can't run
+  # offline). Set AWS_REGION, TF_ROLE_ARN, TF_BACKEND_BUCKET, TF_BACKEND_REGION
+  # (see the header) to enable it.
   # ---------------------------------------------------------------------------
   plan:
     name: Plan
     runs-on: ubuntu-22.04
     needs: validate
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan')
+    if: >
+      vars.AWS_REGION != '' &&
+      (github.event_name == 'pull_request' ||
+       (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan'))
 
     steps:
       - name: Checkout
