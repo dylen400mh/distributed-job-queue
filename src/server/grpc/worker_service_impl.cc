@@ -97,7 +97,15 @@ grpc::Status WorkerServiceImpl::StreamJobs(grpc::ServerContext*               ct
     }
 
     const std::vector<std::string> queues(req->queues().begin(), req->queues().end());
-    const int concurrency = 4;  // default; RegisterWorker sets the DB value
+
+    // RegisterWorker (called before the worker opens this stream, see
+    // Worker::Run()) already persisted the worker's real concurrency to the
+    // DB -- look it up rather than hardcoding a default, since this value is
+    // what actually gates AssignJob's per-worker capacity check.
+    int concurrency = 4;
+    if (auto worker = worker_repo_.FindWorkerById(req->worker_id())) {
+        concurrency = worker->concurrency;
+    }
 
     // Register this stream in the WorkerRegistry using a lambda write callback.
     // This avoids subclassing the final grpc::ServerWriter while keeping the

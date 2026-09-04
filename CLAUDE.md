@@ -97,10 +97,10 @@ docs/               # Architecture docs
 **Job lifecycle:** `PENDING → ASSIGNED → RUNNING → DONE` (or `FAILED → PENDING` for retries, `FAILED → DEAD_LETTERED` when exhausted)
 
 **Scheduler loop** (inside `jq-server`, runs every 500ms):
-1. Query PostgreSQL for `PENDING` jobs ordered by `(priority DESC, created_at ASC)`
-2. For each job, acquire Redis lock `lock:job:<job_id>` (Redlock, TTL = assignment_timeout)
-3. If acquired: transition to `ASSIGNED`, push via `WorkerService.StreamJobs` gRPC stream
-4. If not acquired: skip (another `jq-server` replica claimed it — no leader election needed)
+1. Query PostgreSQL for a batch of `PENDING` jobs ordered by `(priority DESC, created_at ASC)`
+2. Acquire all of the batch's Redis locks (`job:<job_id>`, TTL = assignment_timeout) in one pipelined round trip; jobs not locked were claimed by another `jq-server` replica and skipped (no leader election needed)
+3. Transition the locked batch `PENDING → ASSIGNED` in a single `UPDATE ... WHERE job_id IN (...)` + one batched `job_events` insert
+4. Push each assigned job via `WorkerService.StreamJobs`; any job no worker had capacity for is reverted to `PENDING` and its lock released for the next cycle
 
 **Worker model:** Long-running processes (not on-demand). Workers register via gRPC, receive jobs over a persistent server-streaming RPC, execute via fork/exec, and report results back.
 

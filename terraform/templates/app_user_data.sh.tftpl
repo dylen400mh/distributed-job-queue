@@ -37,6 +37,10 @@ cat > /opt/jq/config.yaml <<'EOF'
 logging:
   level: info
   format: json
+db:
+  # Sized to keep the submit hot path and the scheduler/heartbeat threads from
+  # queuing on connections under load; db.t3.medium comfortably supports this.
+  pool_size: 150
 EOF
 
 cat > /opt/jq/docker-compose.yml <<'EOF'
@@ -58,7 +62,7 @@ services:
     env_file: .env
     volumes:
       - ./config.yaml:/etc/jq/config.yaml:ro
-    command: ["--config", "/etc/jq/config.yaml", "--server-addr", "jq-server:50051", "--queues", "default"]
+    command: ["--config", "/etc/jq/config.yaml", "--server-addr", "jq-server:50051", "--queues", "default", "--concurrency", "64"]
     depends_on:
       - jq-server
     restart: always

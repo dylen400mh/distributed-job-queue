@@ -184,6 +184,50 @@ bool RedisClient::SetNxPx(const std::string& key,
     }
 }
 
+// If the reply read aborts mid-pipeline, hiredis has already flushed and the
+// server has already executed every SET NX in the batch -- any that
+// succeeded past the failure point are locked but never make it into
+// `acquired`, so the caller neither transitions nor releases them. That's an
+// accepted tradeoff rather than something worth reconciling here: those
+// locks self-heal via their TTL (assignment_timeout_s), the same way a
+// crashed worker's lock does, and reconciling would mean re-querying Redis
+// per-key on an already-unhealthy connection.
+std::vector<std::string> RedisClient::SetNxPxBatch(
+    const std::vector<std::string>& keys,
+    const std::string&              value,
+    int64_t                         ttl_ms) {
+    OpTimer t("setnxpx_batch");
+    std::vector<std::string> acquired;
+    if (keys.empty()) return acquired;
+    if (!ctx_ && !Connect()) return acquired;
+
+    // Pipeline: queue every command first, then read all replies. One round
+    // trip for N keys instead of N.
+    for (const auto& key : keys) {
+        redisAppendCommand(ctx_, "SET %s %s NX PX %lld",
+                           key.c_str(), value.c_str(),
+                           static_cast<long long>(ttl_ms));
+    }
+    for (const auto& key : keys) {
+        void* raw = nullptr;
+        if (redisGetReply(ctx_, &raw) != REDIS_OK) {
+            // Pipeline desynced (connection error mid-batch) -- stop reading
+            // (further replies here would be misattributed to the wrong
+            // key) and reconnect so the next call starts from a clean
+            // connection instead of a wedged one.
+            LOG_WARN("Redis SetNxPxBatch reply error; aborting remaining reads",
+                     {{"key", key}});
+            Connect();
+            break;
+        }
+        Reply r(raw);
+        if (r.is_status() && r.ptr->str && std::string(r.ptr->str) == "OK") {
+            acquired.push_back(key);
+        }
+    }
+    return acquired;
+}
+
 void RedisClient::Del(const std::string& key) {
     OpTimer t("del");
     try {

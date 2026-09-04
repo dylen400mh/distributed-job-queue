@@ -23,8 +23,7 @@ using ::testing::SetArgPointee;
 
 class MockJobRepository : public jq::db::IJobRepository {
 public:
-    MOCK_METHOD(bool, QueueExists,       (const std::string&), (override));
-    MOCK_METHOD(int,  GetQueueMaxRetries,(const std::string&), (override));
+    MOCK_METHOD(std::optional<int>, LookupQueueMaxRetries, (const std::string&), (override));
     MOCK_METHOD(std::string, InsertJob,
                 (const std::string&, const std::vector<uint8_t>&, int, int),
                 (override));
@@ -85,7 +84,8 @@ protected:
 // ---------------------------------------------------------------------------
 
 TEST_F(JobServiceTest, SubmitJob_QueueNotFound_ReturnsNotFound) {
-    EXPECT_CALL(repo, QueueExists("no-such-queue")).WillOnce(Return(false));
+    EXPECT_CALL(repo, LookupQueueMaxRetries("no-such-queue"))
+        .WillOnce(Return(std::nullopt));
 
     jq::SubmitJobRequest req;
     req.set_queue_name("no-such-queue");
@@ -96,8 +96,8 @@ TEST_F(JobServiceTest, SubmitJob_QueueNotFound_ReturnsNotFound) {
 }
 
 TEST_F(JobServiceTest, SubmitJob_Success_ReturnsJobId) {
-    EXPECT_CALL(repo, QueueExists("default")).WillOnce(Return(true));
-    EXPECT_CALL(repo, GetQueueMaxRetries("default")).WillOnce(Return(3));
+    EXPECT_CALL(repo, LookupQueueMaxRetries("default"))
+        .WillOnce(Return(std::optional<int>(3)));
     EXPECT_CALL(repo, InsertJob("default", _, 5, 3))
         .WillOnce(Return("job-uuid-1234"));
 

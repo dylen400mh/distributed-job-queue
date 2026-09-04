@@ -82,46 +82,36 @@ constexpr const char* kJobSelect =
     "       EXTRACT(EPOCH FROM not_before)   AS not_before_epoch "
     "FROM jobs ";
 
+// Timestamp column to set depends on new_status; shared by TransitionJobStatus
+// and TransitionJobsBatch so the two transition paths can't drift.
+std::string TimestampColumnFor(const std::string& new_status) {
+    if (new_status == "RUNNING") return ", started_at = now()";
+    if (new_status == "DONE" || new_status == "FAILED" || new_status == "DEAD_LETTERED") {
+        return ", completed_at = now()";
+    }
+    return "";
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// QueueExists
+// LookupQueueMaxRetries
 // ---------------------------------------------------------------------------
 
-bool JobRepository::QueueExists(const std::string& queue_name) {
-    metrics::ScopedDuration timer(metrics::DbQueryTimer("QueueExists"));
-    try {
-        auto c = Conn();
-        pqxx::work txn(c.get());
-        auto r = txn.exec(
-            "SELECT 1 FROM queues WHERE name = " + txn.quote(queue_name));
-        txn.commit();
-        return !r.empty();
-    } catch (const std::exception& e) {
-        LOG_ERROR("QueueExists query failed",
-                  {{"queue", queue_name}, {"error", e.what()}});
-        throw;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GetQueueMaxRetries
-// ---------------------------------------------------------------------------
-
-int JobRepository::GetQueueMaxRetries(const std::string& queue_name) {
-    metrics::ScopedDuration timer(metrics::DbQueryTimer("GetQueueMaxRetries"));
+std::optional<int> JobRepository::LookupQueueMaxRetries(const std::string& queue_name) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("LookupQueueMaxRetries"));
     try {
         auto c = Conn();
         pqxx::work txn(c.get());
         auto r = txn.exec(
             "SELECT max_retries FROM queues WHERE name = " + txn.quote(queue_name));
         txn.commit();
-        if (r.empty()) return 3;
+        if (r.empty()) return std::nullopt;
         return r[0][0].as<int>();
     } catch (const std::exception& e) {
-        LOG_ERROR("GetQueueMaxRetries query failed",
+        LOG_ERROR("LookupQueueMaxRetries query failed",
                   {{"queue", queue_name}, {"error", e.what()}});
-        return 3;
+        throw;
     }
 }
 
@@ -193,13 +183,7 @@ bool JobRepository::TransitionJobStatus(const std::string& job_id,
         auto c = Conn();
         pqxx::work txn(c.get());
 
-        // Timestamp column to set depends on new_status.
-        std::string ts_col;
-        if (new_status == "RUNNING") {
-            ts_col = ", started_at = now()";
-        } else if (new_status == "DONE" || new_status == "FAILED" || new_status == "DEAD_LETTERED") {
-            ts_col = ", completed_at = now()";
-        }
+        const std::string ts_col = TimestampColumnFor(new_status);
 
         // Propagate worker_id to the jobs row when provided.
         std::string wid_col;
@@ -235,6 +219,62 @@ bool JobRepository::TransitionJobStatus(const std::string& job_id,
     } catch (const std::exception& e) {
         LOG_ERROR("TransitionJobStatus failed",
                   {{"job_id", job_id}, {"to", new_status}, {"error", e.what()}});
+        throw;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TransitionJobsBatch
+// ---------------------------------------------------------------------------
+
+std::vector<std::string> JobRepository::TransitionJobsBatch(
+    const std::vector<std::string>& job_ids,
+    const std::string&              expected_from_status,
+    const std::string&              new_status,
+    const std::string&              reason) {
+    metrics::ScopedDuration timer(metrics::DbQueryTimer("TransitionJobsBatch"));
+    std::vector<std::string> transitioned;
+    if (job_ids.empty()) return transitioned;
+    try {
+        auto c = Conn();
+        pqxx::work txn(c.get());
+
+        const std::string ts_col = TimestampColumnFor(new_status);
+
+        std::string id_list;
+        for (size_t i = 0; i < job_ids.size(); ++i) {
+            if (i) id_list += ", ";
+            id_list += txn.quote(job_ids[i]) + "::uuid";
+        }
+
+        auto r = txn.exec(
+            "UPDATE jobs SET status = '" + new_status + "'::job_status" +
+            ts_col + ", updated_at = now() "
+            "WHERE job_id IN (" + id_list + ") "
+            "  AND status = '" + expected_from_status + "'::job_status "
+            "RETURNING job_id::text");
+
+        transitioned.reserve(r.size());
+        for (const auto& row : r) transitioned.push_back(row["job_id"].as<std::string>());
+
+        if (!transitioned.empty()) {
+            std::string values;
+            for (size_t i = 0; i < transitioned.size(); ++i) {
+                if (i) values += ", ";
+                values += "(" + txn.quote(transitioned[i]) + "::uuid, '" +
+                          expected_from_status + "'::job_status, '" +
+                          new_status + "'::job_status, " + txn.quote(reason) + ")";
+            }
+            txn.exec(
+                "INSERT INTO job_events (job_id, from_status, to_status, reason) VALUES " +
+                values);
+        }
+
+        txn.commit();
+        return transitioned;
+    } catch (const std::exception& e) {
+        LOG_ERROR("TransitionJobsBatch failed",
+                  {{"count", static_cast<int>(job_ids.size())}, {"error", e.what()}});
         throw;
     }
 }

@@ -10,14 +10,14 @@ All operator interaction is through `jq-ctl` — there is no UI.
 
 | | |
 |---|---|
-| **Throughput** | 1,052 jobs/sec sustained (ghz, 200 concurrent connections)¹ |
-| **p99 latency** | 661ms submit-to-execution-start at peak load (target: 2,000ms)¹ |
-| **Scheduler p95** | ≤ 5ms per cycle (target: 200ms) — measured across 118,000+ cycles¹ |
-| **Docker images** | 34MB server / 34MB worker (target: < 200MB) |
-| **Test coverage** | 25 unit tests + 8 end-to-end tests, all passing |
+| **Throughput** | 1,003 jobs/sec sustained (ghz, 200 concurrent connections)¹ |
+| **p99 latency** | 519ms submit-to-execution-start at peak load (target: 2,000ms)¹ |
+| **Scheduler p95** | ≤ 50ms per cycle at steady state (target: 200ms)¹ |
+| **Docker images** | 38MB server / 40MB worker (target: < 200MB) |
+| **Test coverage** | 58 unit + integration tests passing |
 | **Infrastructure** | AWS: RDS PostgreSQL, ElastiCache Redis, single EC2 host, Terraform |
 
-¹ Measured under a prior Kafka + Kubernetes/EKS deployment before both were removed as unnecessary (see [Requirements Status](#requirements-status)); full methodology in [docs/performance.md](docs/performance.md). Not re-benchmarked against the current architecture, which is not expected to change these numbers materially — the scheduler, gRPC, and DB paths are unchanged.
+¹ Measured against the current single-EC2-host architecture, with the `ghz` client run in-region on the app host; full methodology, raw output, and the assignment-path fixes it took to get here in [docs/performance.md](docs/performance.md).
 
 ---
 
@@ -63,7 +63,7 @@ All operator interaction is through `jq-ctl` — there is no UI.
                     ──► DEAD_LETTERED
 ```
 
-The scheduler runs every 500 ms, queries `PENDING` jobs ordered by `(priority DESC, created_at ASC)`, acquires a per-job Redis lock, transitions the job to `ASSIGNED`, and streams it to an available worker.
+The scheduler runs every 500 ms, queries a batch of `PENDING` jobs ordered by `(priority DESC, created_at ASC)`, acquires all of the batch's Redis locks in one pipelined round trip, transitions the batch to `ASSIGNED` in a single DB statement, and streams each job to an available worker.
 
 ---
 
@@ -303,32 +303,33 @@ Condensed from the original v1 spec (IDs are referenced in code comments through
 
 ## Requirements Status
 
-> Historical record from before Kafka and Kubernetes were removed (see above) — FR/NFR
-> counts and IDs below reflect the spec as it existed at the time. Full results in
-> [docs/test-results.md](docs/test-results.md); performance methodology and charts in
-> [docs/performance.md](docs/performance.md).
+> FR/NFR counts reflect the current spec (the 3 Kafka-specific FRs were removed with
+> Kafka). Full results in [docs/test-results.md](docs/test-results.md); performance
+> methodology and raw output in [docs/performance.md](docs/performance.md).
 
 | Category | Tested | Pass | Partial | Not Tested |
 |---|---|---|---|---|
-| Functional Requirements (49 total) | 49 | 42 | 5 | 2 |
+| Functional Requirements (46 total) | 46 | 39 | 5 | 2 |
 | Non-Functional Requirements (23 total) | 23 | 21 | 2 | 0 |
 
 ### Test Suite Results
 
 | Suite | Tests | Pass |
 |---|---|---|
-| Unit tests | 25 | 25 |
-| E2e integration tests | 8 | 8 |
+| Unit + integration tests | 58 | 58 |
+| DB migration tests (need a live Postgres) | 3 | 0¹ |
 
-### Performance (measured on AWS EKS, us-east-1)
+¹ `db_unit_tests` exercises real migrations and needs a provisioned local Postgres available to the test binary; it fails only for lack of that, not from a code defect.
+
+### Performance (current single-EC2-host architecture, us-east-1)
 
 | NFR | Target | Measured | Result |
 |---|---|---|---|
-| NFR-001 throughput | ≥ 1,000 jobs/s | **1,052 jobs/s** (ghz 200c, NLB, 10k requests, 0 errors) | **PASS** |
-| NFR-002 p99 latency | < 2s | **647ms** local / **639ms** at EKS peak load | **PASS** |
-| NFR-003 scheduler p95 | < 200ms | **≤ 5ms** (Prometheus histogram, 187 cycles, EKS) | **PASS** |
+| NFR-001 throughput | ≥ 1,000 jobs/s | **1,003 jobs/s** (ghz 200c, in-region on the app host) | **PASS** |
+| NFR-002 p99 latency | < 2s | **519ms** at peak load | **PASS** |
+| NFR-003 scheduler p95 | < 200ms | **≤ 50ms** at steady state | **PASS** |
 
-Note: NFR-001 requires `ghz` (persistent gRPC connection). `jq-ctl` spawns a new process per call (~8ms overhead) and is limited to ~130 req/s regardless of server capacity.
+Note: NFR-001 requires `ghz` (persistent gRPC connection), run in-region to isolate server throughput from client network RTT. `jq-ctl` spawns a new process per call (~8ms overhead) and is limited to ~130 req/s regardless of server capacity.
 
 ### Known Gaps
 
